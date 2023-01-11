@@ -9,6 +9,8 @@ use std::io::Read;
 use std::path::Path;
 use unqlite::{Transaction, UnQLite, KV};
 use zip;
+use eyre::Result;
+use eyre::eyre;
 
 #[derive(Deserialize)]
 #[allow(dead_code)] // Will use all these fields in the future
@@ -35,13 +37,15 @@ pub struct DB {
 }
 
 impl DB {
-    pub fn new(file: &str, manifest: &str) -> DB {
+    pub fn new(file: &str, manifest: &str) -> Result<DB> {
         let conn = UnQLite::create(file);
-        let manifest: Manifest = serde_json::from_str(manifest).unwrap();
-        DB { conn, manifest }
+        conn.kv_store("test_key_name", "test_key_value").map_err(|_| eyre!("can't write to database"))?;
+        let manifest: Manifest = serde_json::from_str(manifest)?;
+        let db = DB { conn, manifest };
+        Ok(db)
     }
 
-    pub fn create_block_id_to_filenames(self, paths: &[String]) -> Self {
+    pub fn create_block_id_to_filenames(self, paths: &[String]) -> Result<Self> {
         // Iterate through dblocks, adding them to the db
         let pb = ProgressBar::new(paths.len() as u64);
         pb.set_style(
@@ -54,23 +58,24 @@ impl DB {
         let conn = &self.conn;
         paths
             .par_iter()
-            .map(|path| {
+            .map(|zippath| {
                 // In this stage, open the file
-                let file = File::open(&Path::new(path)).unwrap();
-                let buf = BufReader::new(file);
-                let zip = zip::ZipArchive::new(buf).unwrap();
-                (zip, path)
+                let zipfile = File::open(&Path::new(zippath)).unwrap();
+                let zipbuf = BufReader::new(zipfile);
+                let zip = zip::ZipArchive::new(zipbuf).unwrap();
+                (zip, zippath)
             })
-            .map(|(mut zip, path)| {
+            .map(|(mut zip, zippath)| {
                 // Convert to a list of paths
                 let paths: Vec<String> = (0..zip.len())
                     .map(|i| zip.by_index(i).unwrap().name().to_string())
                     .collect();
-                (paths, path)
+                (paths, zippath)
             })
-            .for_each(|(paths, path)| {
-                let bytes = path.as_bytes();
+            .for_each(|(paths, zippath)| {
+                let bytes = zippath.as_bytes();
                 for p in paths {
+                    println!("zippath:{} p:{}", zippath, p);
                     let hash = base64::decode_config(&p, base64::URL_SAFE).unwrap();
                     conn.kv_store(hash, bytes).unwrap();
                 }
@@ -78,7 +83,7 @@ impl DB {
                 pb.inc(1);
             });
 
-        self
+        Ok(self)
     }
 
     pub fn get_filename_from_block_id(&self, block_id: &str) -> Option<String> {

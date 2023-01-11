@@ -1,8 +1,11 @@
 mod blockid;
+mod stripbom;
 mod database;
 
 use blockid::*;
+use clap::Parser;
 use database::*;
+use eyre::{Context, Result};
 use num_cpus;
 use pbr::ProgressBar;
 use rayon::prelude::*;
@@ -13,38 +16,40 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use zip;
 
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct CliArgs {
+    /// the location of the backup
+    #[arg(short, long)]
+    backup_dir: String,
+
+    /// a location to restore to
+    #[arg(short, long, value_name = "FILE")]
+    restore_dir: String,
+
+    #[arg(short, long)]
+    cpu_count: Option<usize>,
+}
+
 fn main() {
-    println!("Enter the location of the backup:");
-    let mut backup_dir = String::new();
-    stdin()
-        .read_line(&mut backup_dir)
-        .expect("Did not enter a location.");
-    println!();
-    let backup_dir = backup_dir.trim();
+    let result = run();
+    match result {
+        Err(err) => {
+            println!("err: {:?}", err);
+        }
+        Ok(_) => {}
+    }
+}
 
-    println!("Enter a location to restore to:");
-    let mut restore_dir = String::new();
-    stdin()
-        .read_line(&mut restore_dir)
-        .expect("Did not enter a location.");
-    println!();
-    let restore_dir = restore_dir.trim();
+fn run() -> Result<()> {
+    let args = CliArgs::parse();
+    let backup_dir = args.backup_dir.trim();
+    let restore_dir = args.restore_dir.trim();
 
-    let db_location = Path::join(Path::new(backup_dir), Path::new("index.db"));
+    let db_location = Path::join(Path::new(restore_dir), Path::new("index.db"));
     let db_location = db_location.to_str().unwrap();
 
-    println!(
-        "Enter number of threads to use (Default {}):",
-        num_cpus::get()
-    );
-    let mut cpu_input = String::new();
-    stdin()
-        .read_line(&mut cpu_input)
-        .expect("Did not enter a number");
-    let cpu_count: usize = match cpu_input.trim().parse() {
-        Ok(i) => i,
-        Err(..) => num_cpus::get(),
-    };
+    let cpu_count: usize = args.cpu_count.unwrap_or_else(|| num_cpus::get());
     println!();
 
     // Set CPU count
@@ -69,12 +74,15 @@ fn main() {
     println!("Parsing dlist");
 
     // Open dlist file
-    let mut dlist_zip = zip::ZipArchive::new(File::open(dlist.clone()).unwrap()).unwrap();
-    let mut dlist_file = dlist_zip.by_name("filelist.json").unwrap();
-    let mut dlist_contents = String::new();
-    dlist_file.read_to_string(&mut dlist_contents).unwrap();
-    let file_entries = parse_dlist(&dlist_contents);
+    let dlist_reader = File::open(dlist.clone()).wrap_err_with(|| format!("open {}", dlist))?;
+    let mut dlist_zip = zip::ZipArchive::new(dlist_reader)?;
+    let mut dlist_file = dlist_zip.by_name("filelist.json")?;
+    let mut dlist_contents = Vec::new();
+    dlist_file.read_to_end(&mut dlist_contents)?;
+    let file_entries =
+        parse_dlist(&dlist_contents).wrap_err_with(|| format!("parse_dlist {}", dlist))?;
 
+    println!("Parsing manifest");
     // Open Manifest
     let mut manifest_zip = zip::ZipArchive::new(File::open(dlist.clone()).unwrap()).unwrap();
     let mut manifest_file = manifest_zip.by_name("manifest").unwrap();
@@ -105,7 +113,7 @@ fn main() {
     println!();
     println!("Indexing dblocks");
     let dblock_db =
-        DB::new(db_location, &manifest_contents).create_block_id_to_filenames(&zip_file_names);
+        DB::new(db_location, &manifest_contents)?.create_block_id_to_filenames(&zip_file_names)?;
 
     println!("Restoring directory structure");
     let mut pb = ProgressBar::new(folder_count as u64);
@@ -124,4 +132,6 @@ fn main() {
             f.restore_file(&dblock_db, &restore_dir);
             pb.lock().unwrap().inc();
         });
+
+    Ok(())
 }

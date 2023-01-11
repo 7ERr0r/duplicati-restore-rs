@@ -15,5 +15,8 @@ serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0.39"
 rayon = "1.0"
 num_cpus = "1.10.0"
-unqlite = "1.4.1"
+unqlite = "1.5"
 indicatif = "0.11.0"
+clap = { version = "4.0.32", features = ["derive"] }
+eyre = "0.6.8"
+serde_path_to_error = "0.1"
