@@ -12,8 +12,8 @@ dhat-heap = []    # if you are doing heap profiling
 dhat-ad-hoc = []  # if you are doing ad hoc profiling
 
 [dependencies]
-#zip = { version = "*", path = "../zip" }
-zip = "*"
+zip = { version = "*", path = "../zip" }
+#zip = "*"
 chrono = "0.4.0"
 base64 = "0.10.1"
 pbr = "1.0.1"

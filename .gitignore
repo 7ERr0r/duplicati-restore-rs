@@ -5,3 +5,4 @@
 /debug_*.json
 /testout
 /dhat-heap.json
+.vscode/settings.json
