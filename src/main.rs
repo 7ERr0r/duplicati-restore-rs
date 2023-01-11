@@ -12,7 +12,7 @@ use pbr::ProgressBar;
 use rayon::prelude::*;
 use std::fs;
 use std::fs::File;
-use std::io::Read;
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zip;
@@ -35,6 +35,10 @@ struct CliArgs {
 
     #[arg(short, long)]
     progress_bar: Option<bool>,
+
+    /// true if use additional hashmap to speed up hashed name lookup. Increases memory usage.
+    #[arg(short, long)]
+    hash_to_path: bool,
 }
 
 fn main() {
@@ -42,7 +46,7 @@ fn main() {
     std::thread::spawn(|| {
         let _profiler = dhat::Profiler::new_heap();
 
-        std::thread::sleep(std::time::Duration::from_secs(60));
+        std::thread::sleep(std::time::Duration::from_secs(4 * 60));
     });
 
     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -77,11 +81,11 @@ fn parse_dlist_file<P: AsRef<Path>>(dlist_path: P) -> Result<Vec<FileEntry>> {
         .wrap_err_with(|| format!("open {:?}", dlist_path.as_ref()))?;
     let mut dlist_zip = zip::ZipArchive::new(dlist_reader)?;
     let filelist_name = "filelist.json";
-    let mut dlist_file = dlist_zip.by_name(filelist_name)?;
-    let mut dlist_contents = Vec::new();
-    dlist_file.read_to_end(&mut dlist_contents)?;
-
-    let list = parse_dlist(&dlist_contents).wrap_err_with(|| {
+    let dlist_file = dlist_zip.by_name(filelist_name)?;
+    // let mut dlist_contents = Vec::new();
+    // dlist_file.read_to_end(&mut dlist_contents)?;
+    let bufrdr = BufReader::with_capacity(32 * 1024, dlist_file);
+    let list = parse_dlist_read(bufrdr).wrap_err_with(|| {
         format!(
             "parse_dlist {:?} / {:?}",
             dlist_path.as_ref(),
@@ -115,11 +119,10 @@ fn run() -> Result<()> {
     // let db_location = db_location.to_str().unwrap();
 
     let cpu_count: usize = args.cpu_count.unwrap_or_else(|| num_cpus::get());
-    println!();
 
     // Set CPU count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(cpu_count)
+        .num_threads(cpu_count.min(4))
         .build_global()
         .unwrap();
 
@@ -166,7 +169,7 @@ fn run() -> Result<()> {
     // Open dblock db connection and build db
     println!();
     println!("Indexing dblocks");
-    let dblock_db = DB::new(&manifest_contents)?;
+    let dblock_db = DB::new(&manifest_contents, args.hash_to_path)?;
     dblock_db.create_block_id_to_filenames(&zip_file_names)?;
 
     let show_progress = args.progress_bar.unwrap_or_default();

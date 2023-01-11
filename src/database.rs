@@ -1,6 +1,9 @@
 use base64;
+use eyre::Context;
 use eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
+use rayon::prelude::IntoParallelRefIterator;
+use rayon::prelude::ParallelIterator;
 use serde::Deserialize;
 use serde_json;
 use smallvec::SmallVec;
@@ -49,7 +52,7 @@ pub struct ZipLocation {
 #[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
 pub struct BlockLocation {
     /// Which file inside the zip
-    pub file_index: usize,
+    pub file_index: u32,
 
     /// Which dblock.zip file
     pub zip_path: Arc<ZipLocation>,
@@ -58,45 +61,105 @@ pub struct BlockLocation {
 pub struct ZipArchiveWrapper {
     archive: ZipArchive<MyCloneFileReader>,
 }
-// impl ZipArchiveWrapper {
-//     pub fn clone_with_big_buffer(&self) -> ZipArchive<MyCloneFileReader> {
-//         let archive = self.archive.clone();
-
-//         archive.to_owned();
-
-//         archive
-//     }
-// }
 
 pub struct HashToPath {
-    zip2ziparchive: HashMap<String, ZipArchiveWrapper>,
+    /// Maps hash (without base64) to location in dblock.zip
+    ///
+    /// May be faster, but it's memory-intensive
     hash2path: HashMap<SmallVec<[u8; 32]>, BlockLocation>,
 }
-
 impl HashToPath {
     pub fn new() -> Self {
-        let hash2path = HashMap::new();
+        Self {
+            hash2path: HashMap::new(),
+        }
+    }
+
+    pub fn get_zip_path_by_base64(&self, block_id: &str) -> Option<PathBuf> {
+        let key = base64::decode_config(block_id, base64::STANDARD).ok()?;
+        let key = SmallVec::from(key);
+
+        self.hash2path.get(&key).map(|v| v.zip_path.path.clone())
+    }
+
+    pub fn get_location_by_base64(&self, block_id: &str) -> Option<BlockLocation> {
+        let key = base64::decode_config(block_id, base64::STANDARD).ok()?;
+        let key = SmallVec::from(key);
+        self.hash2path.get(&key).map(|v| v.clone())
+    }
+}
+pub struct HashToBlocks {
+    /// Maps zip file name to a singleton zip reader
+    zip2ziparchive: HashMap<String, ZipArchiveWrapper>,
+
+    hash2path: Option<HashToPath>,
+}
+
+impl HashToBlocks {
+    pub fn new(use_hash_to_path: bool) -> Self {
+        let hash2path = if use_hash_to_path {
+            Some(HashToPath::new())
+        } else {
+            None
+        };
         let zip2ziparchive = HashMap::new();
         Self {
             hash2path,
             zip2ziparchive,
         }
     }
+
+    // pub fn get_zip_path_by_base64(&self, block_id: &str) -> Option<PathBuf> {
+    //     if let Some(hash2path) = &self.hash2path {
+    //         hash2path.get_zip_path_by_base64(block_id)
+    //     } else {
+    //         None
+    //     }
+    // }
+
+    pub fn get_location_by_base64(&self, block_id: &str) -> Option<BlockLocation> {
+        if let Some(hash2path) = &self.hash2path {
+            hash2path.get_location_by_base64(block_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn get_zip_archive(&self, zip_filename: &str) -> Option<ZipArchive<MyCloneFileReader>> {
+        let zip = self.zip2ziparchive.get(zip_filename);
+
+        zip.map(|zip| zip.archive.clone())
+    }
+
+    pub fn get_zip_by_block_id(&self, block_id: &str) -> Option<ZipArchive<MyCloneFileReader>> {
+        if let Some(hash2path) = &self.hash2path {
+            let zname = hash2path.get_zip_path_by_base64(block_id);
+            let zname = zname.map(|n| n.to_string_lossy().to_string());
+            let zipa = zname.map(|zname| self.get_zip_archive(&zname)).flatten();
+            zipa
+        } else {
+            for ziparch in self.zip2ziparchive.values() {
+                if ziparch.archive.contains_file_name(block_id) {
+                    return Some(ziparch.archive.clone());
+                }
+            }
+            None
+        }
+    }
 }
 
 pub struct DB {
-    // conn: UnQLite,
-    inner: Arc<Mutex<HashToPath>>,
+    inner: Arc<Mutex<HashToBlocks>>,
     manifest: Manifest,
 }
 
 impl DB {
-    pub fn new(manifest_bytes: &[u8]) -> Result<DB> {
+    pub fn new(manifest_bytes: &[u8], use_hash_to_path: bool) -> Result<DB> {
         // let conn = UnQLite::create(file);
         // conn.kv_store("test_key_name", "test_key_value").map_err(|_| eyre!("can't write to database"))?;
         let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
 
-        let inner = Arc::new(Mutex::new(HashToPath::new()));
+        let inner = Arc::new(Mutex::new(HashToBlocks::new(use_hash_to_path)));
         let db = DB { inner, manifest };
         Ok(db)
     }
@@ -111,9 +174,9 @@ impl DB {
                 )
                 .progress_chars("##-"),
         );
-        for zip_path in paths {
-            self.import_from_zip(zip_path)?;
-        }
+        paths
+            .par_iter()
+            .try_for_each(|zip_path| self.import_from_zip(zip_path))?;
 
         Ok(())
     }
@@ -142,14 +205,19 @@ impl DB {
             let hash_path = file_name;
             let hash = base64::decode_config(&hash_path, base64::URL_SAFE)?;
             {
+                if hash.len() > 32 {
+                    println!("warn: hash len:{} requires heap alloc", hash.len());
+                }
                 let mut inner = self.inner.lock().unwrap();
-                inner.hash2path.insert(
-                    hash.into(),
-                    BlockLocation {
-                        zip_path: arc_zippath.clone(),
-                        file_index: index,
-                    },
-                );
+                if let Some(hash2path) = &mut inner.hash2path {
+                    hash2path.hash2path.insert(
+                        hash.into(),
+                        BlockLocation {
+                            zip_path: arc_zippath.clone(),
+                            file_index: index as u32,
+                        },
+                    );
+                }
             }
         }
 
@@ -184,13 +252,16 @@ impl DB {
                                     base64::decode_config(&hash_path, base64::URL_SAFE).unwrap();
                                 {
                                     let mut inner = inner.lock().unwrap();
-                                    inner.hash2path.insert(
-                                        hash.into(),
-                                        BlockLocation {
-                                            zip_path: arc_zippath.clone(),
-                                            file_index: file_index,
-                                        },
-                                    );
+
+                                    if let Some(hash2path) = &mut inner.hash2path {
+                                        hash2path.hash2path.insert(
+                                            hash.into(),
+                                            BlockLocation {
+                                                zip_path: arc_zippath.clone(),
+                                                file_index: file_index as u32,
+                                            },
+                                        );
+                                    }
                                 }
 
                                 progress_burst += 1;
@@ -255,60 +326,40 @@ impl DB {
     }
 
     pub fn get_block_id_location(&self, block_id: &str) -> Option<BlockLocation> {
-        let key = base64::decode_config(block_id, base64::STANDARD).unwrap();
-        let key = SmallVec::from(key);
-        self.inner
-            .lock()
-            .unwrap()
-            .hash2path
-            .get(&key)
-            .map(|v| v.clone())
+        self.inner.lock().unwrap().get_location_by_base64(block_id)
     }
 
-    pub fn get_filename_from_block_id(&self, block_id: &str) -> Option<PathBuf> {
-        //let conn = &self.conn;
-        //        println!("{}", block_id);
-        //        let converted_block_id = base64_url_to_plain(block_id);
-        let key = base64::decode_config(block_id, base64::STANDARD).unwrap();
-        let key = SmallVec::from(key);
+    // pub fn get_zip_path_from_block_id(&self, block_id: &str) -> Option<PathBuf> {
+    //     self.inner.lock().unwrap().get_zip_path_by_base64(block_id)
+    // }
 
-        self.inner
-            .lock()
-            .unwrap()
-            .hash2path
-            .get(&key)
-            .map(|v| v.zip_path.path.clone())
-        // let result = conn.kv_fetch(key);
-        // if let Ok(path_bytes) = result {
-        //     Some(String::from_utf8(path_bytes).unwrap())
-        // } else {
-        //     None
-        // }
-    }
+    // pub fn get_zip_archive(&self, zip_filename: &str) -> Option<ZipArchive<MyCloneFileReader>> {
+    //     self.inner.lock().unwrap().get_zip_archive(zip_filename)
 
-    pub fn get_zip_archive(&self, zip_filename: &str) -> Option<ZipArchive<MyCloneFileReader>> {
-        let inner = self.inner.lock().unwrap();
-        let zip = inner.zip2ziparchive.get(zip_filename);
+    // }
 
-        zip.map(|zip| zip.archive.clone())
+    pub fn get_zip_by_block_id(&self, block_id: &str) -> Option<ZipArchive<MyCloneFileReader>> {
+        self.inner.lock().unwrap().get_zip_by_block_id(block_id)
     }
 
     pub fn get_content_block(&self, block_id: &str) -> Result<Option<Vec<u8>>> {
         let mut output = Vec::new();
 
-        //let mut zip = zip::ZipArchive::new(File::open(filename).unwrap()).unwrap();
+        let name_reencoded: String = base64::encode_config(
+            &base64::decode(block_id).expect("wrong base64 block_id"),
+            base64::URL_SAFE,
+        );
 
-        let zname = self.get_filename_from_block_id(block_id);
-        let zname = zname.map(|n| n.to_string_lossy().to_string());
-        let zip = zname.map(|zname| self.get_zip_archive(&zname)).flatten();
-        if let Some(mut zip) = zip {
-            let mut block = zip
-                .by_name(&base64::encode_config(
-                    &base64::decode(block_id).expect("wrong base64 block_id"),
-                    base64::URL_SAFE,
-                ))
-                .unwrap();
-            block.read_to_end(&mut output)?;
+        //let mut zip = zip::ZipArchive::new(File::open(filename).unwrap()).unwrap();
+        let ziparch = self.get_zip_by_block_id(&name_reencoded);
+
+        if let Some(mut ziparch) = ziparch {
+            let mut block = ziparch
+                .by_name(&name_reencoded)
+                .wrap_err("block file by name not found even though we indexed it before")?;
+            block
+                .read_to_end(&mut output)
+                .wrap_err_with(|| format!("reading block file {:?}", block_id))?;
 
             Ok(Some(output))
         } else {

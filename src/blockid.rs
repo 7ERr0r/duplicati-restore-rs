@@ -1,12 +1,12 @@
 use crate::database::BlockLocation;
 use crate::database::DB;
-use crate::stripbom::StripBomBytes;
+use crate::stripbom::strip_bom_from_bufread;
 use base64;
 use eyre::Context;
 use eyre::Result;
 use serde::Deserialize;
 use serde_json;
-use serde_json::de::SliceRead;
+use serde_json::de::IoRead;
 use serde_json::Deserializer;
 
 use eyre::eyre;
@@ -129,7 +129,7 @@ impl FileEntry {
         let a = self.get_first_bytes_location(db);
         let b = othr.get_first_bytes_location(db);
 
-        a.cmp(&b)
+        a.cmp(&b).then_with(|| self.cmp(othr))
     }
 
     pub fn restore_file(&self, db: &DB, restore_path: &str) -> Result<()> {
@@ -150,7 +150,7 @@ impl FileEntry {
                 if self.block_lists.is_empty() {
                     let loc = db.get_block_id_location(hash);
                     println!(
-                        "restoring file {:?}, index:{:?}",
+                        "restoring file (single) {:?}, index:{:?}",
                         relative_file_path,
                         loc.map(|loc| loc.file_index)
                     );
@@ -175,7 +175,7 @@ impl FileEntry {
                         .map(|hash| db.get_block_id_location(hash))
                         .flatten();
                     println!(
-                        "restoring file {:?}, index:{:?}",
+                        "restoring file (blocks) {:?}, index:{:?}",
                         relative_file_path,
                         loc.map(|loc| loc.file_index)
                     );
@@ -236,13 +236,24 @@ pub(self) struct IEntry {
     pub(self) blocklists: Option<Vec<String>>,
 }
 
+#[allow(unused)]
 /// Accepts the dlist as a string (must be read in first)
 /// Returns a Vec of FileEntrys
 pub fn parse_dlist(dlist: &[u8]) -> Result<Vec<FileEntry>> {
+    let file_entries = parse_dlist_read(dlist)?;
+
+    Ok(file_entries)
+}
+
+/// Accepts the dlist as a Read trait
+/// Returns a Vec of FileEntrys
+pub fn parse_dlist_read<'a, R: BufRead>(mut rdr: R) -> Result<Vec<FileEntry>> {
     let mut file_entries = Vec::new();
 
-    let read = SliceRead::new(dlist.strip_bom());
-    let mut de = Deserializer::new(read);
+    strip_bom_from_bufread(&mut rdr)?;
+
+    let iread = IoRead::new(rdr);
+    let mut de = Deserializer::new(iread);
     let entry_list: Vec<IEntry> =
         serde_path_to_error::deserialize(&mut de).wrap_err("deserialize entry_list")?;
 
