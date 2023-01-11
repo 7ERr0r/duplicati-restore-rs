@@ -6,8 +6,14 @@ version = "0.0.2"
 authors = ["Nathan McCarty <nathan@mccarty.io>"]
 edition = "2018"
 
+
+[features]
+dhat-heap = []    # if you are doing heap profiling
+dhat-ad-hoc = []  # if you are doing ad hoc profiling
+
 [dependencies]
-zip = "0.5.2"
+#zip = { version = "*", path = "../zip" }
+zip = "*"
 chrono = "0.4.0"
 base64 = "0.10.1"
 pbr = "1.0.1"
@@ -20,3 +26,6 @@ indicatif = "0.11.0"
 clap = { version = "4.0.32", features = ["derive"] }
 eyre = "0.6.8"
 serde_path_to_error = "0.1"
+smallvec = "*"
+crossbeam-channel = "*"
+dhat = "*"
