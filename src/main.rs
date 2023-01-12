@@ -59,13 +59,17 @@ struct CliArgs {
 
 fn main() {
     #[cfg(feature = "dhat-heap")]
-    std::thread::spawn(|| {
-        let _profiler = dhat::Profiler::new_heap();
+    {
+        std::thread::spawn(|| {
+            let _profiler = dhat::Profiler::new_heap();
 
-        std::thread::sleep(std::time::Duration::from_secs(4 * 60));
-    });
+            std::thread::sleep(std::time::Duration::from_secs(10 * 60));
+            // save profile after 10 minutes
+        });
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+
     let result = run();
     match result {
         Err(err) => {
