@@ -1,3 +1,5 @@
+#![warn(rust_2018_idioms)]
+
 mod blockhash;
 mod blockid;
 mod database;
@@ -15,7 +17,6 @@ use clap::Parser;
 use database::*;
 use eyre::eyre;
 use eyre::{Context, Result};
-use num_cpus;
 use pbr::ProgressBar;
 use rayon::prelude::*;
 use std::fs;
@@ -36,11 +37,11 @@ struct CliArgs {
     #[arg(short, long, value_name = "FILE")]
     restore_dir: String,
 
-    #[arg(short, long)]
-    cpu_count: Option<usize>,
+    #[arg(short, long, default_value_t = 4)]
+    rayon_threads: usize,
 
     #[arg(short, long)]
-    progress_bar: Option<bool>,
+    progress_bar: bool,
 
     /// true if use additional hashmap to speed up hashed name lookup. Increases memory usage.
     #[arg(short, long)]
@@ -121,14 +122,11 @@ fn run() -> Result<()> {
     let backup_dir = args.backup_dir.trim();
     let restore_dir = args.restore_dir.trim();
 
-    // let db_location = Path::join(Path::new(restore_dir), Path::new("index.db"));
-    // let db_location = db_location.to_str().unwrap();
-
-    let cpu_count: usize = args.cpu_count.unwrap_or_else(|| num_cpus::get());
+    let rayon_threads: usize = args.rayon_threads;
 
     // Set CPU count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(cpu_count.min(4))
+        .num_threads(rayon_threads)
         .build_global()
         .unwrap();
 
@@ -182,9 +180,8 @@ fn run() -> Result<()> {
 
     sort_files_sequentially(&mut file_entries, &dblock_db);
 
-    let show_progress = args.progress_bar.unwrap_or_default();
     println!("Restoring directory structure");
-    let mut pb = if show_progress {
+    let mut pb = if args.progress_bar {
         Some(ProgressBar::new(folder_count as u64))
     } else {
         None
@@ -199,7 +196,7 @@ fn run() -> Result<()> {
     println!();
 
     println!("Restoring files");
-    let pb = if show_progress {
+    let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(file_count as u64))))
     } else {
         None

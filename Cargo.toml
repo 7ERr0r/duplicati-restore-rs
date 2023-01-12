@@ -2,18 +2,16 @@
 name = "rust-duplicati-restore"
 description = "A program to restore duplicati backups"
 license = "MIT"
-version = "0.0.2"
-authors = ["Nathan McCarty <nathan@mccarty.io>"]
-edition = "2018"
+version = "0.0.3"
+authors = ["Nathan McCarty <nathan@mccarty.io>", "7ERr0r"]
+edition = "2021"
 
 
 [features]
 dhat-heap = []    # if you are doing heap profiling
-dhat-ad-hoc = []  # if you are doing ad hoc profiling
 
 [dependencies]
-zip = { version = "*", path = "../zip" }
-#zip = "*"
+zip = { version = "*", git = "https://github.com/7ERr0r/zip-duplicati", rev = "77f115763e7d1e686273589e7b26f4efd3f5bf38" }
 chrono = "0.4.0"
 base64 = "0.10.1"
 pbr = "1.0.1"
@@ -27,6 +25,6 @@ clap = { version = "4.0.32", features = ["derive"] }
 eyre = "0.6.8"
 serde_path_to_error = "0.1"
 smallvec = "*"
-crossbeam-channel = "*"
-dhat = "*"
 sha2 = "0.10.6"
+crossbeam-channel = "0.5.6"
+dhat = "0.3.2"

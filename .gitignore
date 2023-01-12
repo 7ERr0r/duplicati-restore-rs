@@ -1,6 +1,7 @@
 /target
 **/*.rs.bk
 **/*.py
+/Cargo.lock
 
 /debug_*.json
 /testout
