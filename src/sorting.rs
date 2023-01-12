@@ -2,7 +2,8 @@ use std::cmp::Ordering;
 
 use crate::{
     blockid::{FileEntry, FileType},
-    database::{BlockLocation, DFileDatabase},
+    database::DFileDatabase,
+    ziparchive::BlockLocation,
 };
 
 /// Optional. Used for sorting.

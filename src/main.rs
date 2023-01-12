@@ -5,6 +5,7 @@ mod hexdisplay;
 mod restoring;
 mod sorting;
 mod stripbom;
+mod ziparchive;
 
 use blockid::*;
 use clap::Parser;
