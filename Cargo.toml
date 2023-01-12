@@ -2,7 +2,7 @@
 name = "rust-duplicati-restore"
 description = "A program to restore duplicati backups"
 license = "MIT"
-version = "0.0.3"
+version = "0.0.4"
 authors = ["Nathan McCarty <nathan@mccarty.io>", "7ERr0r"]
 edition = "2021"
 

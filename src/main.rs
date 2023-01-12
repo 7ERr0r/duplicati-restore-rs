@@ -218,7 +218,7 @@ fn run() -> Result<()> {
         "{} bytes on drive to be restored (predicted)",
         summary.predicted_bytes
     );
-
+    println!("Waiting for dblocks");
     let dblock_db = db_join.join().unwrap()?;
 
     println!("Sorting file_entries");
