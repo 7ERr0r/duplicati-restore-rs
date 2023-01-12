@@ -9,7 +9,7 @@ mod sorting;
 mod stripbom;
 mod ziparchive;
 
-use crate::restoring::restore_file;
+use crate::restoring::{restore_file, RestoreParams};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
 use blockid::*;
@@ -47,6 +47,10 @@ struct CliArgs {
     /// true if use additional hashmap to speed up hashed name lookup. Increases memory usage.
     #[arg(long)]
     hash_to_path: bool,
+
+    /// true to restore windows backup on linux
+    #[arg(long)]
+    replace_backslash_to_slash: Option<bool>,
 }
 
 fn main() {
@@ -188,9 +192,14 @@ fn run() -> Result<()> {
     } else {
         None
     };
+    let restore_params = RestoreParams {
+        db: &dblock_db,
+        restore_path: restore_dir,
+        replace_backslash_to_slash: args.replace_backslash_to_slash.unwrap_or(!cfg!(windows)),
+    };
 
     for entry in file_entries.iter().filter(|f| f.is_folder()) {
-        restore_file(entry, &dblock_db, restore_dir).wrap_err("restoring dir")?;
+        restore_file(entry, &restore_params).wrap_err("restoring dir")?;
         if let Some(pb) = &mut pb {
             pb.inc();
         }
@@ -210,7 +219,7 @@ fn run() -> Result<()> {
         .par_bridge()
         //.iter()
         .try_for_each(|entry_file| -> Result<()> {
-            restore_file(entry_file, &dblock_db, restore_dir).wrap_err("restoring file entry")?;
+            restore_file(entry_file, &restore_params).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }

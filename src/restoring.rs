@@ -28,11 +28,19 @@ struct RestoreFileContext<'a> {
     relative_file_path: &'a Path,
 }
 
-pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -> Result<()> {
-    let root_path = Path::new(restore_path);
+pub struct RestoreParams<'a> {
+    pub db: &'a DFileDatabase,
+    pub restore_path: &'a str,
+    pub replace_backslash_to_slash: bool,
+}
+
+pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()> {
+    let root_path = Path::new(params.restore_path);
     let dfile_path = &entry.path[0..];
-    let dfile_path = dfile_path.replacen(":\\", "\\", 1);
-    let dfile_path = dfile_path.replace('\\', "/");
+    let mut dfile_path = dfile_path.replacen(":\\", "\\", 1);
+    if params.replace_backslash_to_slash {
+        dfile_path = dfile_path.replace('\\', "/");
+    }
     let relative_file_path = Path::new(&dfile_path);
 
     let path = Path::join(root_path, relative_file_path);
@@ -45,7 +53,7 @@ pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -
             let hasher = if *size > 0 { Some(Sha256::new()) } else { None };
             let context = RestoreFileContext {
                 entry,
-                db,
+                db: params.db,
                 debug_location: false,
                 strict_block_size: true,
                 hash,

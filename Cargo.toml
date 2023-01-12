@@ -10,7 +10,8 @@ edition = "2021"
 opt-level = 2
 
 [features]
-dhat-heap = []    # if you are doing heap profiling
+dhat-heap = ["dep:dhat"]    # if you are doing heap profiling
+unqlite = ["dep:unqlite"]
 
 [dependencies]
 zip = { version = "*", git = "https://github.com/7ERr0r/zip-duplicati", rev = "77f115763e7d1e686273589e7b26f4efd3f5bf38" }
@@ -20,8 +21,8 @@ pbr = "1.0.1"
 serde = {version = "1.0", features = ["derive"]}
 serde_json = "1.0.39"
 rayon = "1.0"
-num_cpus = "1.10.0"
-unqlite = "1.5"
+#num_cpus = "1.10.0"
+unqlite = { version = "1.5", optional = true }
 indicatif = "0.11.0"
 clap = { version = "4.0.32", features = ["derive"] }
 eyre = "0.6.8"
@@ -29,4 +30,5 @@ serde_path_to_error = "0.1"
 smallvec = "*"
 sha2 = "0.10.6"
 crossbeam-channel = "0.5.6"
-dhat = "0.3.2"
+dhat = { version = "0.3.2", optional = true }
+
