@@ -2,7 +2,7 @@ use std::{
     cell::RefCell,
     fs::{self, File},
     io::{Seek, SeekFrom, Write},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use crate::{
@@ -24,8 +24,8 @@ struct RestoreFileContext<'a> {
 
     debug_location: bool,
     hasher: RefCell<Option<sha2::Sha256>>,
-    path: PathBuf,
-    relative_file_path: PathBuf,
+    absolute_path: &'a Path,
+    relative_file_path: &'a Path,
 }
 
 pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -> Result<()> {
@@ -50,8 +50,8 @@ pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -
                 hash,
                 size: *size,
                 hasher: RefCell::new(Some(hasher)),
-                path: path.to_path_buf(),
-                relative_file_path: relative_file_path.to_path_buf(),
+                absolute_path: &path,
+                relative_file_path: &relative_file_path,
             };
 
             // Small files only have one block
@@ -78,7 +78,7 @@ fn restore_file_singleblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
         );
     }
 
-    let mut out_file = File::create(ctx.path.clone())?;
+    let mut out_file = File::create(ctx.absolute_path.clone())?;
     let block = ctx.db.get_content_block(ctx.hash)?;
     if let Some(block) = block {
         out_file
@@ -92,7 +92,7 @@ fn restore_file_singleblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
             }
         }
     } else if ctx.size > 0 {
-        println!("Missing block {} for {:?}", ctx.hash, ctx.path,);
+        println!("Missing block {} for {:?}", ctx.hash, ctx.absolute_path,);
     }
     Ok(())
 }
@@ -111,7 +111,7 @@ fn restore_file_multiblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
             loc.map(|loc| loc.file_index)
         );
     }
-    let mut out_file = File::create(ctx.path.clone())?;
+    let mut out_file = File::create(ctx.absolute_path.clone())?;
     // Each blockid points to a list of blockids
     for (blhi, blh) in ctx.entry.block_lists.iter().enumerate() {
         let blockhashoffset = blhi * ctx.db.offset_size();
@@ -141,11 +141,14 @@ fn restore_file_multiblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
                         }
                     }
                 } else {
-                    println!("Failed to find block {} for {:?}", bhash, ctx.path,);
+                    println!("Failed to find block {} for {:?}", bhash, ctx.absolute_path,);
                 }
             }
         } else {
-            println!("Failed to find blocklist {} for {:?}", blh, ctx.path,);
+            println!(
+                "Failed to find blocklist {} for {:?}",
+                blh, ctx.absolute_path,
+            );
         }
     }
 
