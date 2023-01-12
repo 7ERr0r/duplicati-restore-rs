@@ -55,7 +55,7 @@ impl MyCloneFileReader {
         let filebuf = BufReader::with_capacity(cap as usize, target_file);
 
         Ok(Self {
-            config: config.clone(),
+            config,
             buf_reader: filebuf,
         })
     }

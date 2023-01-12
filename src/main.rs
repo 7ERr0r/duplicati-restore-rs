@@ -24,7 +24,6 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use zip;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -37,9 +36,11 @@ struct CliArgs {
     #[arg(short, long, value_name = "FILE")]
     restore_dir: String,
 
+    /// 1 thread will save and read files sequentially
     #[arg(short, long, default_value_t = 4)]
     threads_rayon: usize,
 
+    /// displays progress bar in CLI
     #[arg(short, long)]
     progress_bar: bool,
 
@@ -62,15 +63,16 @@ fn main() {
         Err(err) => {
             println!("err: {:?}", err);
         }
-        Ok(_) => {}
+        Ok(_) => {
+            println!("Finished without errors!");
+        }
     }
 }
 
 fn filename_ends_with<P: AsRef<Path>>(path: P, suffix: &str) -> bool {
     path.as_ref()
         .file_name()
-        .map(|name| name.to_str())
-        .flatten()
+        .and_then(|name| name.to_str())
         .map(|name| name.ends_with(suffix))
         .unwrap_or(false)
 }
@@ -131,11 +133,11 @@ fn run() -> Result<()> {
         .unwrap();
 
     // Find newest dlist
-    let mut dlist_file_paths: Vec<PathBuf> = fs::read_dir(&backup_dir)?
+    let mut dlist_file_paths: Vec<PathBuf> = fs::read_dir(backup_dir)?
         .filter_map(Result::ok)
         .filter(|f| path_is_dlist_zip(f.path()))
         //.map(|f| (f.metadata().map(|m| m.modified()), f))
-        .map(|f| f.path().to_path_buf())
+        .map(|f| f.path())
         .collect();
 
     dlist_file_paths.sort();
@@ -165,7 +167,7 @@ fn run() -> Result<()> {
         .unwrap()
         .filter_map(Result::ok)
         .filter(|f| path_is_dblock_zip(f.path()))
-        .map(|f| f.path().to_path_buf())
+        .map(|f| f.path())
         .collect();
 
     println!("Found {} dblocks", zip_file_names.len());
@@ -188,7 +190,7 @@ fn run() -> Result<()> {
     };
 
     for entry in file_entries.iter().filter(|f| f.is_folder()) {
-        restore_file(entry, &dblock_db, &restore_dir).wrap_err("restoring dir")?;
+        restore_file(entry, &dblock_db, restore_dir).wrap_err("restoring dir")?;
         if let Some(pb) = &mut pb {
             pb.inc();
         }
@@ -208,7 +210,7 @@ fn run() -> Result<()> {
         .par_bridge()
         //.iter()
         .try_for_each(|entry_file| -> Result<()> {
-            restore_file(entry_file, &dblock_db, &restore_dir).wrap_err("restoring file entry")?;
+            restore_file(entry_file, &dblock_db, restore_dir).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }

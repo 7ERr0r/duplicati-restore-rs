@@ -7,17 +7,17 @@ pub trait StripBom {
 
 impl StripBom for str {
     fn strip_bom(&self) -> &str {
-        if self.starts_with("\u{feff}") {
-            &self[3..]
+        if let Some(stripped) = self.strip_prefix('\u{feff}') {
+            stripped
         } else {
-            &self[..]
+            self
         }
     }
 }
 
 impl StripBom for String {
     fn strip_bom(&self) -> &str {
-        &self[..].strip_bom()
+        self[..].strip_bom()
     }
 }
 
@@ -30,11 +30,11 @@ pub trait StripBomBytes {
 }
 
 impl StripBomBytes for [u8] {
-    fn strip_bom<'a>(&'a self) -> &'a [u8] {
-        if starts_with_bom_bytes(self) {
-            &self[3..]
+    fn strip_bom(&self) -> &[u8] {
+        if let Some(stripped) = self.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+            stripped
         } else {
-            &self[..]
+            self
         }
     }
 }

@@ -7,7 +7,7 @@ use std::cmp::Ordering;
 
 /// Not necessary, but useful to speed up file reads from HDD
 /// from like 200 Mbit/s to 700 Mbit/s
-pub fn sort_files_sequentially(file_entries: &mut Vec<FileEntry>, dblock_db: &DFileDatabase) {
+pub fn sort_files_sequentially(file_entries: &mut [FileEntry], dblock_db: &DFileDatabase) {
     file_entries.sort_by(|a, b| compare_fileentry(a, b, dblock_db));
 }
 
@@ -20,7 +20,7 @@ pub fn get_first_bytes_location(entry: &FileEntry, db: &DFileDatabase) -> Option
             } else {
                 let first = entry.block_lists.first();
 
-                first.map(|bid| db.get_block_id_location(bid)).flatten()
+                first.and_then(|bid| db.get_block_id_location(bid))
             }
         }
         _ => None,

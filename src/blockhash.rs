@@ -43,7 +43,7 @@ impl BlockIdHash {
             assert!(block_id_str.len() < buffer.capacity());
             base64::decode_config_buf(block_id_str, config, buffer).ok()?;
             let hash = BlockIdHash {
-                hash: SmallVec::from_slice(&buffer),
+                hash: SmallVec::from_slice(buffer),
             };
             buffer.clear();
             Some(hash)

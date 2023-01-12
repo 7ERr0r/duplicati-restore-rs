@@ -4,7 +4,6 @@ use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
 use serde::Deserialize;
-use serde_json;
 use serde_json::de::IoRead;
 use serde_json::Deserializer;
 use std::io::prelude::*;
@@ -24,10 +23,7 @@ pub enum FileType {
 
 impl FileType {
     pub fn is_file(&self) -> bool {
-        match self {
-            FileType::File { .. } => true,
-            _ => false,
-        }
+        matches!(self, FileType::File { .. })
     }
 
     #[allow(unused)]
@@ -39,10 +35,7 @@ impl FileType {
     }
 
     pub fn is_folder(&self) -> bool {
-        match self {
-            FileType::Folder { .. } => true,
-            _ => false,
-        }
+        matches!(self, FileType::Folder { .. })
     }
 }
 
@@ -67,7 +60,7 @@ impl FileEntry {
         if let Some(blocks) = &ientry.blocklists {
             for block in blocks {
                 block_lists.push(
-                    BlockIdHash::from_base64(&block)
+                    BlockIdHash::from_base64(block)
                         .ok_or_else(|| eyre!("blocklists BlockIdHash::from_base64 fail"))?,
                 );
             }
@@ -78,11 +71,11 @@ impl FileEntry {
                     .hash
                     .as_ref()
                     .map(|hash| {
-                        BlockIdHash::from_base64(&hash)
+                        BlockIdHash::from_base64(hash)
                             .ok_or_else(|| eyre!("ientry.hash BlockIdHash::from_base64 fail"))
                     })
                     .ok_or_else(|| eyre!("hash not found"))??,
-                size: ientry.size.clone().ok_or_else(|| eyre!("size not found"))?,
+                size: ientry.size.ok_or_else(|| eyre!("size not found"))?,
                 time: ientry.time.clone().ok_or_else(|| eyre!("time not found"))?,
             },
             "Folder" => FileType::Folder {
@@ -139,7 +132,7 @@ pub fn parse_dlist(dlist: &[u8]) -> Result<Vec<FileEntry>> {
 
 /// Accepts the dlist as a Read trait
 /// Returns a Vec of FileEntrys
-pub fn parse_dlist_read<'a, R: BufRead>(mut rdr: R) -> Result<Vec<FileEntry>> {
+pub fn parse_dlist_read<R: BufRead>(mut rdr: R) -> Result<Vec<FileEntry>> {
     let mut file_entries = Vec::new();
 
     strip_bom_from_bufread(&mut rdr)?;

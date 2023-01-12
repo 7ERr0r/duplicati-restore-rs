@@ -32,7 +32,7 @@ pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -
     let root_path = Path::new(restore_path);
     let dfile_path = &entry.path[0..];
     let dfile_path = dfile_path.replacen(":\\", "\\", 1);
-    let dfile_path = dfile_path.replace("\\", "/");
+    let dfile_path = dfile_path.replace('\\', "/");
     let relative_file_path = Path::new(&dfile_path);
 
     let path = Path::join(root_path, relative_file_path);
@@ -52,7 +52,7 @@ pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -
                 size: *size,
                 hasher: RefCell::new(hasher),
                 absolute_path: &path,
-                relative_file_path: &relative_file_path,
+                relative_file_path,
             };
 
             // Small files only have one block
@@ -69,7 +69,7 @@ pub fn restore_file(entry: &FileEntry, db: &DFileDatabase, restore_path: &str) -
     Ok(())
 }
 
-fn restore_file_singleblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
+fn restore_file_singleblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
     if ctx.debug_location {
         let loc = ctx.db.get_block_id_location(ctx.hash);
         println!(
@@ -79,7 +79,7 @@ fn restore_file_singleblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
         );
     }
 
-    let mut out_file = File::create(ctx.absolute_path.clone())?;
+    let mut out_file = File::create(ctx.absolute_path)?;
     let block = ctx.db.get_content_block(ctx.hash)?;
     if let Some(block) = block {
         out_file
@@ -102,21 +102,20 @@ fn restore_file_singleblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
     Ok(())
 }
 
-fn restore_file_multiblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
+fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
     if ctx.debug_location {
         let loc = ctx
             .entry
             .block_lists
             .first()
-            .map(|hash| ctx.db.get_block_id_location(hash))
-            .flatten();
+            .and_then(|hash| ctx.db.get_block_id_location(hash));
         println!(
             "restoring file (blocks) {:?}, index:{:?}",
             ctx.relative_file_path,
             loc.map(|loc| loc.file_index)
         );
     }
-    let mut out_file = File::create(ctx.absolute_path.clone())?;
+    let mut out_file = File::create(ctx.absolute_path)?;
     // Each blockid points to a list of blockids
     for (blhi, blh) in ctx.entry.block_lists.iter().enumerate() {
         let blockhashoffset = blhi * ctx.db.offset_size();
@@ -180,7 +179,7 @@ fn restore_file_multiblock<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
     Ok(())
 }
 
-fn check_file_hash<'a>(ctx: &RestoreFileContext<'a>) -> Result<()> {
+fn check_file_hash(ctx: &RestoreFileContext<'_>) -> Result<()> {
     if ctx.size == 0 {
         return Ok(());
     }

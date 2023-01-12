@@ -4,14 +4,13 @@ use crate::ziparchive::MyCloneFileConfig;
 use crate::ziparchive::MyCloneFileReader;
 use crate::ziparchive::ZipArchiveWrapper;
 use crate::ziparchive::ZipLocation;
-use base64;
 use eyre::Context;
 use eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use serde::Deserialize;
-use serde_json;
+
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io::Read;
@@ -20,7 +19,6 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
 use std::sync::Mutex;
-use zip;
 use zip::ZipArchive;
 
 #[derive(Deserialize)]
@@ -62,7 +60,7 @@ impl HashToPath {
     }
 
     pub fn get_location_by_block_id(&self, block_id: &BlockIdHash) -> Option<BlockLocation> {
-        self.hash2path.get(&block_id.hash).map(|v| v.clone())
+        self.hash2path.get(&block_id.hash).cloned()
     }
 }
 pub struct HashToBlocks {
@@ -101,7 +99,7 @@ impl HashToBlocks {
             let buf = &mut [0u8; 48];
             let name_reencoded = block_id.as_base64_urlsafe(buf);
             for ziparch in self.zip2ziparchive.values() {
-                if let Some(index) = ziparch.archive.get_file_index(&name_reencoded) {
+                if let Some(index) = ziparch.archive.get_file_index(name_reencoded) {
                     return Some(BlockLocation {
                         file_index: index as u32,
                         zip_path: ziparch.zip_path.clone(),
@@ -125,13 +123,12 @@ impl HashToBlocks {
         if let Some(hash2path) = &self.hash2path {
             let zname = hash2path.get_zip_path_by_block_id(block_id);
             let zname = zname.map(|n| n.to_string_lossy().to_string());
-            let zipa = zname.map(|zname| self.get_zip_archive(&zname)).flatten();
-            zipa
+            zname.and_then(|zname| self.get_zip_archive(&zname))
         } else {
             let buf = &mut [0u8; 48];
             let name_reencoded = block_id.as_base64_urlsafe(buf);
             for ziparch in self.zip2ziparchive.values() {
-                if ziparch.archive.contains_file_name(&name_reencoded) {
+                if ziparch.archive.contains_file_name(name_reencoded) {
                     return Some(ziparch.archive.clone());
                 }
             }
@@ -254,13 +251,13 @@ impl DFileDatabase {
         let mut output = Vec::new();
 
         //let mut zip = zip::ZipArchive::new(File::open(filename).unwrap()).unwrap();
-        let ziparch = self.get_zip_by_block_id(&block_id);
+        let ziparch = self.get_zip_by_block_id(block_id);
 
         if let Some(mut ziparch) = ziparch {
             let buf = &mut [0u8; 48];
             let name_reencoded = block_id.as_base64_urlsafe(buf);
             let mut block = ziparch
-                .by_name(&name_reencoded)
+                .by_name(name_reencoded)
                 .wrap_err("block file by name not found even though we indexed it before")?;
             block
                 .read_to_end(&mut output)

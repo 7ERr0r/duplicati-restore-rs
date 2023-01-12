@@ -38,7 +38,7 @@ impl<'a> std::fmt::Display for EscapeRawString<'a> {
 }
 
 fn escape_byte_maybe(f: &mut std::fmt::Formatter<'_>, b: u8) -> std::fmt::Result {
-    if b > 32 && b < 126 && b != '"' as u8 {
+    if b > 32 && b < 126 && b != b'"' {
         write!(f, "{}", b as char)?;
     } else {
         let (high, low) = byte2hex(b, HEX_CHARS_LOWER);
