@@ -20,6 +20,7 @@ jobs:
           rustup update
           rustup component add clippy
           rustup target add x86_64-pc-windows-gnu
+          apt-get install -y gcc-mingw-w64-x86-64
 
       - name: Toolchain info
         run: |
