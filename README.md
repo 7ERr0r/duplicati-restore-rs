@@ -6,7 +6,10 @@ Uses rayon to process files across many threads, to maximze restore speed.
 ## Getting Started
 
 Simply run the rust-duplicati-restore from the commandline.
-It doesn't accept any flags and will prompt you for all information.
+
+```
+Usage: cargo run -- --backup-dir <BACKUP_DIR> --restore-dir <FILE>
+```
 
 ### Prerequisites
 
@@ -24,7 +27,6 @@ Or download the latest binary from the artifacts
 
 ## Limitations
 
-* Currently does not verify restored files
 * Does not yet support encrypted backups, I reccomend combining aescrypt with gnu parallel for decryption
 * Does not support remote repositories yet, I reccomend using rclone to pull donw a local copy
 
@@ -44,3 +46,7 @@ This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md
 
 * Ben Fisher - His python script included in the Duplicati reposistory inspired
   this project, and this project was roughly based on it.
+
+* Nathan McCarty - Created Rust-Duplicati-Restore itself
+
+* 7ERr0r - Optimized ZIP reader. Added sha2 verification.
