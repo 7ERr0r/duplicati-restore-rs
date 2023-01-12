@@ -38,13 +38,13 @@ struct CliArgs {
     restore_dir: String,
 
     #[arg(short, long, default_value_t = 4)]
-    rayon_threads: usize,
+    threads_rayon: usize,
 
     #[arg(short, long)]
     progress_bar: bool,
 
     /// true if use additional hashmap to speed up hashed name lookup. Increases memory usage.
-    #[arg(short, long)]
+    #[arg(long)]
     hash_to_path: bool,
 }
 
@@ -122,7 +122,7 @@ fn run() -> Result<()> {
     let backup_dir = args.backup_dir.trim();
     let restore_dir = args.restore_dir.trim();
 
-    let rayon_threads: usize = args.rayon_threads;
+    let rayon_threads: usize = args.threads_rayon;
 
     // Set CPU count
     rayon::ThreadPoolBuilder::new()
