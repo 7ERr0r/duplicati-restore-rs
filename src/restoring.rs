@@ -14,7 +14,23 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone)]
+pub struct RestoreContext {
+    pub block_buffer: RefCell<Vec<u8>>,
+    pub block_hashes_buffer: RefCell<Vec<u8>>,
+}
+
+impl RestoreContext {
+    pub fn new() -> Self {
+        Self {
+            block_buffer: RefCell::new(Vec::with_capacity(8 * 1024)),
+            block_hashes_buffer: RefCell::new(Vec::with_capacity(8 * 1024)),
+        }
+    }
+}
+
 struct RestoreFileContext<'a> {
+    restore_context: &'a RestoreContext,
     db: &'a DFileDatabase,
 
     entry: &'a FileEntry,
@@ -45,7 +61,11 @@ pub struct RestoreParams<'a> {
     pub summary: RestoreSummary,
 }
 
-pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()> {
+pub fn restore_file(
+    entry: &FileEntry,
+    params: &RestoreParams<'_>,
+    restore_context: &RestoreContext,
+) -> Result<()> {
     let (path, relative_file_path) = if let Some(restore_path) = &params.restore_path {
         let root_path = Path::new(restore_path);
         let dfile_path = &entry.path[0..];
@@ -70,6 +90,7 @@ pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()>
         FileType::File { hash, size, .. } => {
             let hasher = if *size > 0 { Some(Sha256::new()) } else { None };
             let context = RestoreFileContext {
+                restore_context,
                 entry,
                 db: params.db,
                 debug_location: false,
@@ -110,17 +131,19 @@ fn restore_file_singleblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
     } else {
         None
     };
-    let block = ctx.db.get_content_block(ctx.hash)?;
-    if let Some(block) = block {
+    let buf = &mut ctx.restore_context.block_buffer.borrow_mut();
+    buf.clear();
+    let block = ctx.db.get_content_block(ctx.hash, buf)?;
+    if let Some(_block_len) = block {
         if let Some(out_file) = &mut out_file {
             out_file
-                .write_all(block.as_ref())
+                .write_all(buf.as_slice())
                 .wrap_err("write single-block file")?;
         }
         {
             let mut hasher = ctx.hasher.borrow_mut();
             if let Some(h) = hasher.as_mut() {
-                h.update(block.as_slice());
+                h.update(buf.as_slice());
             }
         }
     } else if ctx.size > 0 {
@@ -154,21 +177,26 @@ fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
     // Each blockid points to a list of blockids
     for (blhi, blh) in ctx.entry.block_lists.iter().enumerate() {
         let blockhashoffset = blhi * ctx.db.offset_size();
+
+        let hashes_buf = &mut ctx.restore_context.block_hashes_buffer.borrow_mut();
+        hashes_buf.clear();
         let binary_hashes = ctx
             .db
-            .get_content_block(blh)
+            .get_content_block(blh, hashes_buf)
             .wrap_err_with(|| format!("get main content block: {}", blh))?;
-        if let Some(binary_hashes) = binary_hashes {
+        if let Some(_binary_hashes_len) = binary_hashes {
             let mut last_block_size = None;
-            for (bi, bhash) in binary_hashes.chunks(ctx.db.hash_size()).enumerate() {
+            for (bi, bhash) in hashes_buf.chunks(ctx.db.hash_size()).enumerate() {
                 //let bhash = base64::encode(bhash);
                 let bhash = BlockIdHash::from_bytes(bhash)
                     .ok_or_else(|| eyre!("binary hash len is not 32 bytes"))?;
-                let block = ctx.db.get_content_block(&bhash).wrap_err_with(|| {
+                let buf = &mut ctx.restore_context.block_buffer.borrow_mut();
+                buf.clear();
+                let block = ctx.db.get_content_block(&bhash, buf).wrap_err_with(|| {
                     format!("get one of content blocks (number {}): {}", bi, blh)
                 })?;
 
-                if let Some(block) = block {
+                if let Some(_block_len) = block {
                     let full_block = ctx.db.block_size();
 
                     if let Some(out_file) = &mut out_file {
@@ -176,12 +204,14 @@ fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
                         out_file
                             .seek(SeekFrom::Start(offset))
                             .wrap_err("seek blockhashoffset + bi * full_block")?;
-                        out_file.write_all(&block).wrap_err("write (multi) block")?;
+                        out_file
+                            .write_all(buf.as_slice())
+                            .wrap_err("write (multi) block")?;
                     }
                     {
                         let mut hasher = ctx.hasher.borrow_mut();
                         if let Some(h) = hasher.as_mut() {
-                            h.update(block.as_slice());
+                            h.update(buf.as_slice());
                         }
                     }
                     if ctx.strict_block_size {
@@ -194,7 +224,7 @@ fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
                                 ))?;
                             }
                         }
-                        last_block_size = Some(block.len());
+                        last_block_size = Some(buf.len());
                     }
                 } else {
                     Err(eyre!(

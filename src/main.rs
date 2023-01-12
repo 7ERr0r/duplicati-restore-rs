@@ -9,7 +9,7 @@ mod sorting;
 mod stripbom;
 mod ziparchive;
 
-use crate::restoring::{restore_file, RestoreParams, RestoreSummary};
+use crate::restoring::{restore_file, RestoreContext, RestoreParams, RestoreSummary};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
 use blockid::*;
@@ -244,7 +244,7 @@ fn restore_all(
     } else {
         "Verifying"
     };
-    println!("{} directory structure", doing);
+    println!("{doing} directory structure");
     let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(
             params.summary.folder_count as u64,
@@ -257,16 +257,19 @@ fn restore_all(
         .iter()
         .filter(|f| f.is_folder())
         .par_bridge()
-        .try_for_each(|entry_folder| -> Result<()> {
-            restore_file(entry_folder, params).wrap_err("restoring dir")?;
+        .try_for_each_with(RestoreContext::new(), |ctx, entry_folder| -> Result<()> {
+            restore_file(entry_folder, params, ctx).wrap_err("restoring dir")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }
             Ok(())
         })?;
+    if let Some(pb) = &pb {
+        pb.lock().unwrap().tick();
+    }
     println!();
 
-    println!("{} files", doing);
+    println!("{doing} files");
     let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(
             params.summary.predicted_bytes,
@@ -278,13 +281,17 @@ fn restore_all(
         .iter()
         .filter(|f| f.is_file())
         .par_bridge()
-        .try_for_each(|entry_file| -> Result<()> {
-            restore_file(entry_file, params).wrap_err("restoring file entry")?;
+        .try_for_each_with(RestoreContext::new(), |ctx, entry_file| -> Result<()> {
+            restore_file(entry_file, params, ctx).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().add(entry_file.predicted_time());
             }
             Ok(())
         })?;
+    if let Some(pb) = &pb {
+        pb.lock().unwrap().tick();
+    }
+    println!();
 
     Ok(())
 }

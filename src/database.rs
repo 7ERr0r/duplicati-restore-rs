@@ -247,23 +247,24 @@ impl DFileDatabase {
         self.inner.lock().unwrap().get_zip_by_block_id(block_id)
     }
 
-    pub fn get_content_block(&self, block_id: &BlockIdHash) -> Result<Option<Vec<u8>>> {
-        let mut output = Vec::new();
-
-        //let mut zip = zip::ZipArchive::new(File::open(filename).unwrap()).unwrap();
+    pub fn get_content_block(
+        &self,
+        block_id: &BlockIdHash,
+        block_buf: &mut Vec<u8>,
+    ) -> Result<Option<usize>> {
         let ziparch = self.get_zip_by_block_id(block_id);
 
         if let Some(mut ziparch) = ziparch {
-            let buf = &mut [0u8; 48];
-            let name_reencoded = block_id.as_base64_urlsafe(buf);
+            let base64_buf = &mut [0u8; 48];
+            let name_reencoded = block_id.as_base64_urlsafe(base64_buf);
             let mut block = ziparch
                 .by_name(name_reencoded)
                 .wrap_err("block file by name not found even though we indexed it before")?;
-            block
-                .read_to_end(&mut output)
+            let n = block
+                .read_to_end(block_buf)
                 .wrap_err_with(|| format!("reading block file {:?}", block_id))?;
 
-            Ok(Some(output))
+            Ok(Some(n))
         } else {
             Ok(None)
         }
