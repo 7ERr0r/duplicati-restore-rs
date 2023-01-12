@@ -4,6 +4,6 @@
 
 /debug_*.json
 /testout
-/dhat-heap.json
+/dhat-heap*.json
 .vscode/settings.json
 testrun.sh

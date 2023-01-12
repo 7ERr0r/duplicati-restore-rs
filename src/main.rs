@@ -1,5 +1,9 @@
+mod blockhash;
 mod blockid;
 mod database;
+mod hexdisplay;
+mod restoring;
+mod sorting;
 mod stripbom;
 
 use blockid::*;
@@ -10,6 +14,7 @@ use eyre::{Context, Result};
 use num_cpus;
 use pbr::ProgressBar;
 use rayon::prelude::*;
+use sorting::compare_fileentry;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -17,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zip;
 
+use crate::restoring::restore_file;
 use crate::stripbom::StripBom;
 
 #[derive(Parser)]
@@ -169,8 +175,12 @@ fn run() -> Result<()> {
     // Open dblock db connection and build db
     println!();
     println!("Indexing dblocks");
-    let dblock_db = DB::new(&manifest_contents, args.hash_to_path)?;
+    let dblock_db = DFileDatabase::new(&manifest_contents, args.hash_to_path)?;
     dblock_db.create_block_id_to_filenames(&zip_file_names)?;
+
+    println!("Sorting file_entries");
+
+    sort_files_sequentially(&mut file_entries, &dblock_db);
 
     let show_progress = args.progress_bar.unwrap_or_default();
     println!("Restoring directory structure");
@@ -180,18 +190,13 @@ fn run() -> Result<()> {
         None
     };
 
-    for d in file_entries.iter().filter(|f| f.is_folder()) {
-        d.restore_file(&dblock_db, &restore_dir)
-            .wrap_err("restoring dir")?;
+    for entry in file_entries.iter().filter(|f| f.is_folder()) {
+        restore_file(entry, &dblock_db, &restore_dir).wrap_err("restoring dir")?;
         if let Some(pb) = &mut pb {
             pb.inc();
         }
     }
     println!();
-
-    println!("Sorting file_entries");
-
-    sort_files_sequentially(&mut file_entries, &dblock_db);
 
     println!("Restoring files");
     let pb = if show_progress {
@@ -205,9 +210,8 @@ fn run() -> Result<()> {
         .filter(|f| f.is_file())
         .par_bridge()
         //.iter()
-        .try_for_each(|f| -> Result<()> {
-            f.restore_file(&dblock_db, &restore_dir)
-                .wrap_err("restoring file entry")?;
+        .try_for_each(|entry_file| -> Result<()> {
+            restore_file(entry_file, &dblock_db, &restore_dir).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }
@@ -219,8 +223,8 @@ fn run() -> Result<()> {
 
 /// Not necessary, but useful to speed up file reads from HDD
 /// from like 200 Mbit/s to 700 Mbit/s
-fn sort_files_sequentially(file_entries: &mut Vec<FileEntry>, dblock_db: &DB) {
-    file_entries.sort_by(|a, b| a.compare(b, dblock_db));
+fn sort_files_sequentially(file_entries: &mut Vec<FileEntry>, dblock_db: &DFileDatabase) {
+    file_entries.sort_by(|a, b| compare_fileentry(a, b, dblock_db));
 }
 
 #[cfg(feature = "dhat-heap")]

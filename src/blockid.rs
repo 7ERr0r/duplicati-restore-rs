@@ -1,7 +1,5 @@
-use crate::database::BlockLocation;
-use crate::database::DB;
+use crate::blockhash::BlockIdHash;
 use crate::stripbom::strip_bom_from_bufread;
-use base64;
 use eyre::Context;
 use eyre::Result;
 use serde::Deserialize;
@@ -10,18 +8,13 @@ use serde_json::de::IoRead;
 use serde_json::Deserializer;
 
 use eyre::eyre;
-use std::cmp::Ordering;
-use std::fs;
-use std::fs::File;
+
 use std::io::prelude::*;
-use std::io::SeekFrom;
-use std::io::Write;
-use std::path::Path;
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum FileType {
     File {
-        hash: String,
+        hash: BlockIdHash,
         size: i64,
         time: String,
     },
@@ -57,13 +50,13 @@ impl FileType {
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub struct FileEntry {
-    path: String,
+    pub path: String,
     #[allow(unused)]
-    metahash: String,
+    pub metahash: String,
     #[allow(unused)]
-    metasize: i64,
-    file_type: FileType,
-    block_lists: Vec<String>,
+    pub metasize: i64,
+    pub file_type: FileType,
+    pub block_lists: Vec<BlockIdHash>,
 }
 
 impl FileEntry {
@@ -71,14 +64,26 @@ impl FileEntry {
         let path = ientry.path.clone();
         let metahash = ientry.metahash.clone();
         let metasize = ientry.metasize;
-        let block_lists = if let Some(blocks) = &ientry.blocklists {
-            blocks.clone()
-        } else {
-            Vec::new()
+        let mut block_lists = Vec::new();
+
+        if let Some(blocks) = &ientry.blocklists {
+            for block in blocks {
+                block_lists.push(
+                    BlockIdHash::from_base64(&block)
+                        .ok_or_else(|| eyre!("blocklists BlockIdHash::from_base64 fail"))?,
+                );
+            }
         };
         let file_type = match ientry.filetype.as_ref() {
             "File" => FileType::File {
-                hash: ientry.hash.clone().ok_or_else(|| eyre!("hash not found"))?,
+                hash: ientry
+                    .hash
+                    .as_ref()
+                    .map(|hash| {
+                        BlockIdHash::from_base64(&hash)
+                            .ok_or_else(|| eyre!("ientry.hash BlockIdHash::from_base64 fail"))
+                    })
+                    .ok_or_else(|| eyre!("hash not found"))??,
                 size: ientry.size.clone().ok_or_else(|| eyre!("size not found"))?,
                 time: ientry.time.clone().ok_or_else(|| eyre!("time not found"))?,
             },
@@ -106,117 +111,6 @@ impl FileEntry {
 
     pub fn is_folder(&self) -> bool {
         self.file_type.is_folder()
-    }
-
-    /// Optional. Used for sorting.
-    pub fn get_first_bytes_location(&self, db: &DB) -> Option<BlockLocation> {
-        match &self.file_type {
-            FileType::File { hash, .. } => {
-                if self.block_lists.is_empty() {
-                    db.get_block_id_location(&hash)
-                } else {
-                    let first = self.block_lists.first();
-
-                    first.map(|bid| db.get_block_id_location(bid)).flatten()
-                }
-            }
-            _ => None,
-        }
-    }
-
-    /// Optional. Used for sorting.
-    pub fn compare(&self, othr: &FileEntry, db: &DB) -> Ordering {
-        let a = self.get_first_bytes_location(db);
-        let b = othr.get_first_bytes_location(db);
-
-        a.cmp(&b).then_with(|| self.cmp(othr))
-    }
-
-    pub fn restore_file(&self, db: &DB, restore_path: &str) -> Result<()> {
-        let root_path = Path::new(restore_path);
-        let dfile_path = &self.path[0..];
-        let dfile_path = dfile_path.replacen(":\\", "\\", 1);
-        let dfile_path = dfile_path.replace("\\", "/");
-        let relative_file_path = Path::new(&dfile_path);
-
-        let path = Path::join(root_path, relative_file_path);
-
-        match &self.file_type {
-            FileType::Folder { .. } => {
-                fs::create_dir_all(path)?;
-            }
-            FileType::File { hash, size, .. } => {
-                // Small files only have one block
-                if self.block_lists.is_empty() {
-                    let loc = db.get_block_id_location(hash);
-                    println!(
-                        "restoring file (single) {:?}, index:{:?}",
-                        relative_file_path,
-                        loc.map(|loc| loc.file_index)
-                    );
-
-                    let mut out_file = File::create(path.clone())?;
-                    let block = db.get_content_block(hash)?;
-                    if let Some(block) = block {
-                        out_file
-                            .write_all(block.as_ref())
-                            .wrap_err("write single-block file")?;
-                    } else if *size > 0 {
-                        println!(
-                            "Missing block {} for {}",
-                            hash,
-                            path.to_str().unwrap_or("not utf8?")
-                        );
-                    }
-                } else {
-                    let loc = self
-                        .block_lists
-                        .first()
-                        .map(|hash| db.get_block_id_location(hash))
-                        .flatten();
-                    println!(
-                        "restoring file (blocks) {:?}, index:{:?}",
-                        relative_file_path,
-                        loc.map(|loc| loc.file_index)
-                    );
-                    let mut out_file = File::create(path.clone())?;
-                    // Each blockid points to a list of blockids
-                    for (blhi, blh) in self.block_lists.iter().enumerate() {
-                        let blockhashoffset = blhi * db.offset_size();
-                        let binary_hashes = db.get_content_block(blh)?;
-                        if let Some(binary_hashes) = binary_hashes {
-                            for (bi, bhash) in binary_hashes.chunks(db.hash_size()).enumerate() {
-                                let bhash = base64::encode(bhash);
-                                let block = db.get_content_block(&bhash)?;
-
-                                if let Some(block) = block {
-                                    out_file
-                                        .seek(SeekFrom::Start(
-                                            (blockhashoffset + bi * db.block_size()) as u64,
-                                        ))
-                                        .wrap_err("seek blockhashoffset + bi * db.block_size()")?;
-                                    out_file.write_all(&block).wrap_err("write block")?;
-                                } else {
-                                    println!(
-                                        "Failed to find block {} for {}",
-                                        bhash,
-                                        path.to_str().unwrap_or("not utf8?")
-                                    );
-                                }
-                            }
-                        } else {
-                            println!(
-                                "Failed to find blocklist {} for {}",
-                                blh,
-                                path.to_str().unwrap()
-                            );
-                        }
-                    }
-                }
-            }
-            _ => (),
-        }
-        Ok(())
     }
 }
 
