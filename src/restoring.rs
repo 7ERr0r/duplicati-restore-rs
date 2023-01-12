@@ -11,7 +11,7 @@ use std::{
     cell::RefCell,
     fs::{self, File},
     io::{Seek, SeekFrom, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 struct RestoreFileContext<'a> {
@@ -24,32 +24,48 @@ struct RestoreFileContext<'a> {
     debug_location: bool,
     strict_block_size: bool,
     hasher: RefCell<Option<sha2::Sha256>>,
-    absolute_path: &'a Path,
-    relative_file_path: &'a Path,
+
+    /// None if only verifying
+    absolute_path: Option<&'a PathBuf>,
+    /// None if only verifying
+    relative_file_path: Option<&'a PathBuf>,
+}
+
+pub struct RestoreSummary {
+    pub file_count: usize,
+    pub folder_count: usize,
+    pub total_bytes: u64,
+    pub predicted_bytes: u64,
 }
 
 pub struct RestoreParams<'a> {
     pub db: &'a DFileDatabase,
-    pub restore_path: &'a str,
+    pub restore_path: Option<&'a str>,
     pub replace_backslash_to_slash: bool,
-    pub file_count: usize,
-    pub folder_count: usize,
+    pub summary: RestoreSummary,
 }
 
 pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()> {
-    let root_path = Path::new(params.restore_path);
-    let dfile_path = &entry.path[0..];
-    let mut dfile_path = dfile_path.replacen(":\\", "\\", 1);
-    if params.replace_backslash_to_slash {
-        dfile_path = dfile_path.replace('\\', "/");
-    }
-    let relative_file_path = Path::new(&dfile_path);
+    let (path, relative_file_path) = if let Some(restore_path) = &params.restore_path {
+        let root_path = Path::new(restore_path);
+        let dfile_path = &entry.path[0..];
+        let mut dfile_path = dfile_path.replacen(":\\", "\\", 1);
+        if params.replace_backslash_to_slash {
+            dfile_path = dfile_path.replace('\\', "/");
+        }
+        let relative_file_path = PathBuf::from(&dfile_path);
 
-    let path = Path::join(root_path, relative_file_path);
+        let path = Path::join(root_path, &relative_file_path);
+        (Some(path), Some(relative_file_path))
+    } else {
+        (None, None)
+    };
 
     match &entry.file_type {
         FileType::Folder { .. } => {
-            fs::create_dir_all(path)?;
+            if let Some(path) = path {
+                fs::create_dir_all(path)?;
+            }
         }
         FileType::File { hash, size, .. } => {
             let hasher = if *size > 0 { Some(Sha256::new()) } else { None };
@@ -61,8 +77,8 @@ pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()>
                 hash,
                 size: *size,
                 hasher: RefCell::new(hasher),
-                absolute_path: &path,
-                relative_file_path,
+                absolute_path: path.as_ref(),
+                relative_file_path: relative_file_path.as_ref(),
             };
 
             // Small files only have one block
@@ -89,13 +105,18 @@ fn restore_file_singleblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
         );
     }
 
-    let mut out_file = File::create(ctx.absolute_path)?;
+    let mut out_file = if let Some(path) = ctx.absolute_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
     let block = ctx.db.get_content_block(ctx.hash)?;
     if let Some(block) = block {
-        out_file
-            .write_all(block.as_ref())
-            .wrap_err("write single-block file")?;
-
+        if let Some(out_file) = &mut out_file {
+            out_file
+                .write_all(block.as_ref())
+                .wrap_err("write single-block file")?;
+        }
         {
             let mut hasher = ctx.hasher.borrow_mut();
             if let Some(h) = hasher.as_mut() {
@@ -125,7 +146,11 @@ fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
             loc.map(|loc| loc.file_index)
         );
     }
-    let mut out_file = File::create(ctx.absolute_path)?;
+    let mut out_file = if let Some(path) = ctx.absolute_path {
+        Some(File::create(path)?)
+    } else {
+        None
+    };
     // Each blockid points to a list of blockids
     for (blhi, blh) in ctx.entry.block_lists.iter().enumerate() {
         let blockhashoffset = blhi * ctx.db.offset_size();
@@ -146,11 +171,13 @@ fn restore_file_multiblock(ctx: &RestoreFileContext<'_>) -> Result<()> {
                 if let Some(block) = block {
                     let full_block = ctx.db.block_size();
 
-                    let offset = (blockhashoffset + bi * full_block) as u64;
-                    out_file
-                        .seek(SeekFrom::Start(offset))
-                        .wrap_err("seek blockhashoffset + bi * full_block")?;
-                    out_file.write_all(&block).wrap_err("write block")?;
+                    if let Some(out_file) = &mut out_file {
+                        let offset = (blockhashoffset + bi * full_block) as u64;
+                        out_file
+                            .seek(SeekFrom::Start(offset))
+                            .wrap_err("seek blockhashoffset + bi * full_block")?;
+                        out_file.write_all(&block).wrap_err("write (multi) block")?;
+                    }
                     {
                         let mut hasher = ctx.hasher.borrow_mut();
                         if let Some(h) = hasher.as_mut() {

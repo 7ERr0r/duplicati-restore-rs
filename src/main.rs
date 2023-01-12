@@ -9,7 +9,7 @@ mod sorting;
 mod stripbom;
 mod ziparchive;
 
-use crate::restoring::{restore_file, RestoreParams};
+use crate::restoring::{restore_file, RestoreParams, RestoreSummary};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
 use blockid::*;
@@ -34,7 +34,7 @@ struct CliArgs {
 
     /// a location to restore to
     #[arg(short, long, value_name = "FILE")]
-    restore_dir: String,
+    restore_dir: Option<String>,
 
     /// 1 thread will save and read files sequentially
     #[arg(short, long, default_value_t = 4)]
@@ -51,6 +51,10 @@ struct CliArgs {
     /// true to restore windows backup on linux
     #[arg(long)]
     replace_backslash_to_slash: Option<bool>,
+
+    /// true to verify without writing files to disk
+    #[arg(long)]
+    verify_only: bool,
 }
 
 fn main() {
@@ -125,8 +129,16 @@ fn read_manifest<P: AsRef<Path>>(dlist_path: P) -> Result<Vec<u8>> {
 
 fn run() -> Result<()> {
     let args = CliArgs::parse();
-    let backup_dir = args.backup_dir.trim();
-    let restore_dir = args.restore_dir.trim();
+    let backup_dir = args.backup_dir.trim().to_string();
+    let restore_dir = if !args.verify_only {
+        let dir = args
+            .restore_dir
+            .as_ref()
+            .ok_or_else(|| eyre!("--restore_dir <DIR> not provided"))?;
+        Some(dir.trim())
+    } else {
+        None
+    };
 
     // Set CPU count
     rayon::ThreadPoolBuilder::new()
@@ -135,7 +147,7 @@ fn run() -> Result<()> {
         .unwrap();
 
     // Find newest dlist
-    let mut dlist_file_paths: Vec<PathBuf> = fs::read_dir(backup_dir)?
+    let mut dlist_file_paths: Vec<PathBuf> = fs::read_dir(&backup_dir)?
         .filter_map(Result::ok)
         .filter(|f| path_is_dlist_zip(f.path()))
         .map(|f| f.path())
@@ -151,35 +163,63 @@ fn run() -> Result<()> {
         "Newest: {:?} appears to be newest dlist, using it.",
         newest_dlist
     );
-    println!("Parsing dlist");
-    let mut file_entries = parse_dlist_file(newest_dlist)?;
-
     println!("Parsing manifest");
     let manifest_contents = read_manifest(newest_dlist)?;
 
-    let file_count = file_entries.iter().filter(|f| f.is_file()).count();
-    println!("{} files to be restored", file_count);
-    let folder_count = file_entries.iter().filter(|f| f.is_folder()).count();
-    println!("{} folders to be restored", folder_count);
-    println!();
-
-    // Get list of dblocks
-    let zip_file_names: Vec<PathBuf> = fs::read_dir(backup_dir)
-        .unwrap()
-        .filter_map(Result::ok)
-        .filter(|f| path_is_dblock_zip(f.path()))
-        .map(|f| f.path())
-        .collect();
-
-    println!("Found {} dblocks", zip_file_names.len());
-
     // Open dblock db connection and build db
     println!();
-    println!("Indexing dblocks");
-    let dblock_db = DFileDatabase::new(&manifest_contents, args.hash_to_path)?;
-    dblock_db.create_block_id_to_filenames(&zip_file_names)?;
+    let db_join = std::thread::spawn(move || -> Result<DFileDatabase> {
+        println!("Listing dblocks");
+        // Get list of dblocks
+        let zip_file_names: Vec<PathBuf> = fs::read_dir(backup_dir)
+            .wrap_err("read_dir(backup_dir)")?
+            .filter_map(Result::ok)
+            .filter(|f| path_is_dblock_zip(f.path()))
+            .map(|f| f.path())
+            .collect();
+
+        println!("Found {} dblocks", zip_file_names.len());
+        println!("Indexing dblocks");
+        let dblock_db = DFileDatabase::new(&manifest_contents, args.hash_to_path)?;
+        dblock_db.create_block_id_to_filenames(&zip_file_names)?;
+        Ok(dblock_db)
+    });
+
+    println!("Parsing dlist");
+    let file_entries = parse_dlist_file(newest_dlist)?;
+    let file_entries = Arc::new(file_entries);
+
+    let entries = file_entries.clone();
+    let summary_join = std::thread::spawn(move || {
+        let file_count = entries.iter().filter(|f| f.is_file()).count();
+        let folder_count = entries.iter().filter(|f| f.is_folder()).count();
+        let predicted_bytes: u64 = entries.iter().map(|f| f.predicted_time()).sum();
+        let total_bytes: u64 = entries.iter().map(|f| f.bytes_size()).sum();
+        RestoreSummary {
+            file_count,
+            folder_count,
+            total_bytes,
+            predicted_bytes,
+        }
+    });
+
+    println!();
+
+    let summary = summary_join.join().unwrap();
+
+    println!("{} files to be restored", summary.file_count);
+    println!("{} folders to be restored", summary.folder_count);
+    println!("{} bytes in files", summary.total_bytes);
+    println!(
+        "{} bytes on drive to be restored (predicted)",
+        summary.predicted_bytes
+    );
+
+    let dblock_db = db_join.join().unwrap()?;
 
     println!("Sorting file_entries");
+
+    let mut file_entries = Arc::try_unwrap(file_entries).expect("no other owners of Arc");
 
     sort_files_sequentially(&mut file_entries, &dblock_db);
 
@@ -187,8 +227,7 @@ fn run() -> Result<()> {
         db: &dblock_db,
         restore_path: restore_dir,
         replace_backslash_to_slash: args.replace_backslash_to_slash.unwrap_or(!cfg!(windows)),
-        file_count,
-        folder_count,
+        summary,
     };
     restore_all(&args, &restore_params, &file_entries)?;
 
@@ -200,10 +239,15 @@ fn restore_all(
     params: &RestoreParams<'_>,
     file_entries: &[FileEntry],
 ) -> Result<()> {
-    println!("Restoring directory structure");
+    let doing = if params.restore_path.is_some() {
+        "Restoring"
+    } else {
+        "Verifying"
+    };
+    println!("{} directory structure", doing);
     let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(
-            params.folder_count as u64,
+            params.summary.folder_count as u64,
         ))))
     } else {
         None
@@ -222,10 +266,10 @@ fn restore_all(
         })?;
     println!();
 
-    println!("Restoring files");
+    println!("{} files", doing);
     let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(
-            params.file_count as u64,
+            params.summary.predicted_bytes,
         ))))
     } else {
         None
@@ -237,7 +281,7 @@ fn restore_all(
         .try_for_each(|entry_file| -> Result<()> {
             restore_file(entry_file, params).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
-                pb.lock().unwrap().inc();
+                pb.lock().unwrap().add(entry_file.predicted_time());
             }
             Ok(())
         })?;

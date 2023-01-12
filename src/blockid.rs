@@ -6,6 +6,7 @@ use eyre::Result;
 use serde::Deserialize;
 use serde_json::de::IoRead;
 use serde_json::Deserializer;
+use smallvec::SmallVec;
 use std::io::prelude::*;
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -47,7 +48,7 @@ pub struct FileEntry {
     #[allow(unused)]
     pub metasize: i64,
     pub file_type: FileType,
-    pub block_lists: Vec<BlockIdHash>,
+    pub block_lists: SmallVec<[BlockIdHash; 1]>,
 }
 
 impl FileEntry {
@@ -55,7 +56,7 @@ impl FileEntry {
         let path = ientry.path.clone();
         let metahash = ientry.metahash.clone();
         let metasize = ientry.metasize;
-        let mut block_lists = Vec::new();
+        let mut block_lists = SmallVec::new();
 
         if let Some(blocks) = &ientry.blocklists {
             for block in blocks {
@@ -102,6 +103,25 @@ impl FileEntry {
 
     pub fn is_folder(&self) -> bool {
         self.file_type.is_folder()
+    }
+
+    /// How much bytes it probably takes on disk when restoring
+    pub fn predicted_time(&self) -> u64 {
+        // Not an accurate number
+        let psize = 8 * 1024 + self.path.len() as u64;
+        if let FileType::File { size, .. } = self.file_type {
+            psize + size as u64
+        } else {
+            psize
+        }
+    }
+
+    pub fn bytes_size(&self) -> u64 {
+        if let FileType::File { size, .. } = self.file_type {
+            size as u64
+        } else {
+            0
+        }
     }
 }
 
