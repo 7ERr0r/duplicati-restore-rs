@@ -15,7 +15,6 @@ use eyre::{Context, Result};
 use num_cpus;
 use pbr::ProgressBar;
 use rayon::prelude::*;
-use sorting::compare_fileentry;
 use std::fs;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -24,6 +23,7 @@ use std::sync::{Arc, Mutex};
 use zip;
 
 use crate::restoring::restore_file;
+use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
 
 #[derive(Parser)]
@@ -220,12 +220,6 @@ fn run() -> Result<()> {
         })?;
 
     Ok(())
-}
-
-/// Not necessary, but useful to speed up file reads from HDD
-/// from like 200 Mbit/s to 700 Mbit/s
-fn sort_files_sequentially(file_entries: &mut Vec<FileEntry>, dblock_db: &DFileDatabase) {
-    file_entries.sort_by(|a, b| compare_fileentry(a, b, dblock_db));
 }
 
 #[cfg(feature = "dhat-heap")]

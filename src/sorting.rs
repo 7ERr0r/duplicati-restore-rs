@@ -6,6 +6,12 @@ use crate::{
     ziparchive::BlockLocation,
 };
 
+/// Not necessary, but useful to speed up file reads from HDD
+/// from like 200 Mbit/s to 700 Mbit/s
+pub fn sort_files_sequentially(file_entries: &mut Vec<FileEntry>, dblock_db: &DFileDatabase) {
+    file_entries.sort_by(|a, b| compare_fileentry(a, b, dblock_db));
+}
+
 /// Optional. Used for sorting.
 pub fn get_first_bytes_location(entry: &FileEntry, db: &DFileDatabase) -> Option<BlockLocation> {
     match &entry.file_type {
