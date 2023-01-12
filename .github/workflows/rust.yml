@@ -58,7 +58,7 @@ jobs:
     needs: test
     runs-on: ${{ matrix.OS }}
     env:
-      NAME: rust-cross-compile-example # change with the name of your project
+      NAME: rust-duplicati-restore
       TARGET: ${{ matrix.TARGET }}
       OS: ${{ matrix.OS }}
     steps:
@@ -77,7 +77,7 @@ jobs:
           # dependencies are only needed on ubuntu as that's the only place where
           # we make cross-compilation
           if [[ $OS =~ ^ubuntu.*$ ]]; then
-            sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf
+            sudo apt-get install -qq crossbuild-essential-arm64 crossbuild-essential-armhf musl-gcc
           fi
 
           # some additional configuration for cross-compilation on linux
