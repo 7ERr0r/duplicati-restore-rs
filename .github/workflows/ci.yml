@@ -19,7 +19,7 @@ jobs:
         run: |
           rustup update
           rustup component add clippy
-          rustup install nightly
+          rustup target add x86_64-pc-windows-gnu
 
       - name: Toolchain info
         run: |

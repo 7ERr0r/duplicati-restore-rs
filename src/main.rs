@@ -128,11 +128,9 @@ fn run() -> Result<()> {
     let backup_dir = args.backup_dir.trim();
     let restore_dir = args.restore_dir.trim();
 
-    let rayon_threads: usize = args.threads_rayon;
-
     // Set CPU count
     rayon::ThreadPoolBuilder::new()
-        .num_threads(rayon_threads)
+        .num_threads(args.threads_rayon)
         .build_global()
         .unwrap();
 
@@ -140,7 +138,6 @@ fn run() -> Result<()> {
     let mut dlist_file_paths: Vec<PathBuf> = fs::read_dir(backup_dir)?
         .filter_map(Result::ok)
         .filter(|f| path_is_dlist_zip(f.path()))
-        //.map(|f| (f.metadata().map(|m| m.modified()), f))
         .map(|f| f.path())
         .collect();
 
@@ -186,40 +183,59 @@ fn run() -> Result<()> {
 
     sort_files_sequentially(&mut file_entries, &dblock_db);
 
-    println!("Restoring directory structure");
-    let mut pb = if args.progress_bar {
-        Some(ProgressBar::new(folder_count as u64))
-    } else {
-        None
-    };
     let restore_params = RestoreParams {
         db: &dblock_db,
         restore_path: restore_dir,
         replace_backslash_to_slash: args.replace_backslash_to_slash.unwrap_or(!cfg!(windows)),
+        file_count,
+        folder_count,
+    };
+    restore_all(&args, &restore_params, &file_entries)?;
+
+    Ok(())
+}
+
+fn restore_all(
+    args: &CliArgs,
+    params: &RestoreParams<'_>,
+    file_entries: &[FileEntry],
+) -> Result<()> {
+    println!("Restoring directory structure");
+    let pb = if args.progress_bar {
+        Some(Arc::new(Mutex::new(ProgressBar::new(
+            params.folder_count as u64,
+        ))))
+    } else {
+        None
     };
 
-    for entry in file_entries.iter().filter(|f| f.is_folder()) {
-        restore_file(entry, &restore_params).wrap_err("restoring dir")?;
-        if let Some(pb) = &mut pb {
-            pb.inc();
-        }
-    }
+    file_entries
+        .iter()
+        .filter(|f| f.is_folder())
+        .par_bridge()
+        .try_for_each(|entry_folder| -> Result<()> {
+            restore_file(entry_folder, params).wrap_err("restoring dir")?;
+            if let Some(pb) = &pb {
+                pb.lock().unwrap().inc();
+            }
+            Ok(())
+        })?;
     println!();
 
     println!("Restoring files");
     let pb = if args.progress_bar {
-        Some(Arc::new(Mutex::new(ProgressBar::new(file_count as u64))))
+        Some(Arc::new(Mutex::new(ProgressBar::new(
+            params.file_count as u64,
+        ))))
     } else {
         None
     };
     file_entries
-        //.par_iter()
         .iter()
         .filter(|f| f.is_file())
         .par_bridge()
-        //.iter()
         .try_for_each(|entry_file| -> Result<()> {
-            restore_file(entry_file, &restore_params).wrap_err("restoring file entry")?;
+            restore_file(entry_file, params).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }

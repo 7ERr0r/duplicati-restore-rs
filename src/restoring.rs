@@ -32,6 +32,8 @@ pub struct RestoreParams<'a> {
     pub db: &'a DFileDatabase,
     pub restore_path: &'a str,
     pub replace_backslash_to_slash: bool,
+    pub file_count: usize,
+    pub folder_count: usize,
 }
 
 pub fn restore_file(entry: &FileEntry, params: &RestoreParams<'_>) -> Result<()> {
