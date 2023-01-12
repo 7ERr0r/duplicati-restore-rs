@@ -45,7 +45,7 @@ impl BlockIdHash {
         BASE64_DECODE_BUF.with(|b| -> Option<BlockIdHash> {
             let buffer: &mut Vec<u8> = &mut b.borrow_mut();
             assert!(block_id_str.len() < buffer.capacity());
-            engine.decode_slice(block_id_str, buffer).ok()?;
+            engine.decode_vec(block_id_str, buffer).ok()?;
             let hash = BlockIdHash {
                 hash: SmallVec::from_slice(buffer),
             };
