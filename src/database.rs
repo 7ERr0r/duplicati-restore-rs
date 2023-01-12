@@ -4,6 +4,8 @@ use crate::ziparchive::MyCloneFileConfig;
 use crate::ziparchive::MyCloneFileReader;
 use crate::ziparchive::ZipArchiveWrapper;
 use crate::ziparchive::ZipLocation;
+use base64::engine::general_purpose;
+use base64::Engine;
 use eyre::Context;
 use eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -160,7 +162,7 @@ impl DFileDatabase {
             ProgressStyle::default_bar()
                 .template(
                     "[{elapsed_precise}] {wide_bar:40.cyan/blue} {pos:>7}/{len:7} {msg} [{eta_precise}]",
-                )
+                )?
                 .progress_chars("##-"),
         );
         paths.par_iter().try_for_each(|zip_path| {
@@ -181,17 +183,14 @@ impl DFileDatabase {
         let zipbuf = MyCloneFileReader::new(config.clone())?;
         let zip = zip::ZipArchive::new(zipbuf)?;
 
-        let arc_zippath = Arc::new(ZipLocation {
-            path: zip_path.clone(),
-            path_str: zip_path.to_string_lossy().to_string(),
-        });
+        let arc_zippath = Arc::new(ZipLocation { path: zip_path });
         // Convert to a list of paths
 
         for (index, file_name) in zip.file_names_ordered().enumerate() {
             //let file_in_zip = zip.by_index_raw(file_index)?;
             //let file_name = file_in_zip.name().to_string();
             let hash_path = file_name;
-            let hash = base64::decode_config(&hash_path, base64::URL_SAFE)?;
+            let hash = general_purpose::URL_SAFE.decode(hash_path)?;
             {
                 if hash.len() > 32 {
                     println!("warn: hash len:{} requires heap alloc", hash.len());
@@ -217,7 +216,7 @@ impl DFileDatabase {
                 zip_path: arc_zippath.clone(),
                 archive: zip,
             };
-            let path_str = arc_zippath.path_str.clone();
+            let path_str = arc_zippath.path.to_string_lossy().to_string();
             inner.zip2ziparchive.insert(path_str, wrapper);
         }
 

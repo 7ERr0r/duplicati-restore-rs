@@ -1,5 +1,6 @@
 use std::{cell::RefCell, fmt::Display};
 
+use base64::engine::general_purpose;
 use smallvec::SmallVec;
 
 use crate::hexdisplay::HexDisplayBytes;
@@ -30,18 +31,21 @@ impl BlockIdHash {
     }
 
     pub fn from_base64(block_id_str: &str) -> Option<BlockIdHash> {
-        Self::from_base64_config(block_id_str, base64::STANDARD)
+        Self::from_base64_config(block_id_str, general_purpose::STANDARD)
     }
     #[allow(unused)]
     pub fn from_base64_urlsafe(block_id_str: &str) -> Option<BlockIdHash> {
-        Self::from_base64_config(block_id_str, base64::URL_SAFE)
+        Self::from_base64_config(block_id_str, general_purpose::URL_SAFE)
     }
 
-    pub fn from_base64_config(block_id_str: &str, config: base64::Config) -> Option<BlockIdHash> {
+    pub fn from_base64_config<E: base64::Engine>(
+        block_id_str: &str,
+        engine: E,
+    ) -> Option<BlockIdHash> {
         BASE64_DECODE_BUF.with(|b| -> Option<BlockIdHash> {
             let buffer: &mut Vec<u8> = &mut b.borrow_mut();
             assert!(block_id_str.len() < buffer.capacity());
-            base64::decode_config_buf(block_id_str, config, buffer).ok()?;
+            engine.decode_slice(block_id_str, buffer).ok()?;
             let hash = BlockIdHash {
                 hash: SmallVec::from_slice(buffer),
             };
@@ -52,13 +56,15 @@ impl BlockIdHash {
 
     #[allow(unused)]
     pub fn as_base64<'a>(&self, buf: &'a mut [u8]) -> &'a str {
-        self.as_base64_config(base64::STANDARD, buf)
+        self.as_base64_config(general_purpose::STANDARD, buf)
     }
     pub fn as_base64_urlsafe<'a>(&self, buf: &'a mut [u8]) -> &'a str {
-        self.as_base64_config(base64::URL_SAFE, buf)
+        self.as_base64_config(general_purpose::URL_SAFE, buf)
     }
-    pub fn as_base64_config<'a>(&self, config: base64::Config, buf: &'a mut [u8]) -> &'a str {
-        let encoded_len = base64::encode_config_slice(self.hash.as_slice(), config, &mut buf[..]);
+    pub fn as_base64_config<'a, E: base64::Engine>(&self, engine: E, buf: &'a mut [u8]) -> &'a str {
+        let encoded_len = engine
+            .encode_slice(self.hash.as_slice(), &mut buf[..])
+            .unwrap();
         //debug_assert_eq!(encoded_len, buf.len());
 
         std::str::from_utf8(&buf[..encoded_len]).expect("Invalid UTF8")

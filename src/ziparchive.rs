@@ -10,17 +10,33 @@ use zip::ZipArchive;
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 /// Path to dblock.zip
 pub struct ZipLocation {
-    pub path_str: String,
+    // pub path_str: String,
     pub path: PathBuf,
 }
 
-#[derive(Clone, Debug, PartialEq, PartialOrd, Eq, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockLocation {
-    /// Which file inside the zip
-    pub file_index: u32,
-
     /// Which dblock.zip file
     pub zip_path: Arc<ZipLocation>,
+
+    /// Which file inside the zip
+    pub file_index: u32,
+}
+
+impl Ord for BlockLocation {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // First zip_path (which dblock.zip it is)
+        // then file_index inside the ZIP file
+        self.zip_path
+            .cmp(&other.zip_path)
+            .then_with(|| self.file_index.cmp(&other.file_index))
+    }
+}
+
+impl PartialOrd for BlockLocation {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 pub struct ZipArchiveWrapper {
