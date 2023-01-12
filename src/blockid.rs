@@ -1,14 +1,12 @@
 use crate::blockhash::BlockIdHash;
 use crate::stripbom::strip_bom_from_bufread;
+use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
 use serde::Deserialize;
 use serde_json;
 use serde_json::de::IoRead;
 use serde_json::Deserializer;
-
-use eyre::eyre;
-
 use std::io::prelude::*;
 
 #[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]

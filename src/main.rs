@@ -7,6 +7,9 @@ mod sorting;
 mod stripbom;
 mod ziparchive;
 
+use crate::restoring::restore_file;
+use crate::sorting::sort_files_sequentially;
+use crate::stripbom::StripBom;
 use blockid::*;
 use clap::Parser;
 use database::*;
@@ -21,10 +24,6 @@ use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use zip;
-
-use crate::restoring::restore_file;
-use crate::sorting::sort_files_sequentially;
-use crate::stripbom::StripBom;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]

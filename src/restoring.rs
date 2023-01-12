@@ -1,10 +1,3 @@
-use std::{
-    cell::RefCell,
-    fs::{self, File},
-    io::{Seek, SeekFrom, Write},
-    path::Path,
-};
-
 use crate::{
     blockhash::BlockIdHash,
     blockid::{FileEntry, FileType},
@@ -14,6 +7,12 @@ use crate::{
 use eyre::eyre;
 use eyre::{Context, Result};
 use sha2::{Digest, Sha256};
+use std::{
+    cell::RefCell,
+    fs::{self, File},
+    io::{Seek, SeekFrom, Write},
+    path::Path,
+};
 
 struct RestoreFileContext<'a> {
     db: &'a DFileDatabase,

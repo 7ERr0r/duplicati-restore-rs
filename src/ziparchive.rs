@@ -1,11 +1,10 @@
+use eyre::Result;
 use std::{
     fs::File,
     io::{BufRead, BufReader, IoSliceMut, Read, Seek, SeekFrom},
     path::PathBuf,
     sync::{atomic::AtomicU32, Arc},
 };
-
-use eyre::Result;
 use zip::ZipArchive;
 
 #[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]

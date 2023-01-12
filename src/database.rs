@@ -1,3 +1,9 @@
+use crate::blockhash::BlockIdHash;
+use crate::ziparchive::BlockLocation;
+use crate::ziparchive::MyCloneFileConfig;
+use crate::ziparchive::MyCloneFileReader;
+use crate::ziparchive::ZipArchiveWrapper;
+use crate::ziparchive::ZipLocation;
 use base64;
 use eyre::Context;
 use eyre::Result;
@@ -16,13 +22,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use zip;
 use zip::ZipArchive;
-
-use crate::blockhash::BlockIdHash;
-use crate::ziparchive::BlockLocation;
-use crate::ziparchive::MyCloneFileConfig;
-use crate::ziparchive::MyCloneFileReader;
-use crate::ziparchive::ZipArchiveWrapper;
-use crate::ziparchive::ZipLocation;
 
 #[derive(Deserialize)]
 #[allow(dead_code)] // Will use all these fields in the future

@@ -49,9 +49,8 @@ fn escape_byte_maybe(f: &mut std::fmt::Formatter<'_>, b: u8) -> std::fmt::Result
 }
 
 const HEX_CHARS_LOWER: &[u8; 16] = b"0123456789abcdef";
-//const HEX_CHARS_UPPER: &[u8; 16] = b"0123456789ABCDEF";
 
-// the inverse of `val`.
+/// returns 2 chars representing byte in hex
 fn byte2hex(byte: u8, table: &[u8; 16]) -> (u8, u8) {
     let high = table[((byte & 0xf0) >> 4) as usize];
     let low = table[(byte & 0x0f) as usize];

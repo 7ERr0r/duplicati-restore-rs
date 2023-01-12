@@ -1,10 +1,9 @@
-use std::cmp::Ordering;
-
 use crate::{
     blockid::{FileEntry, FileType},
     database::DFileDatabase,
     ziparchive::BlockLocation,
 };
+use std::cmp::Ordering;
 
 /// Not necessary, but useful to speed up file reads from HDD
 /// from like 200 Mbit/s to 700 Mbit/s
