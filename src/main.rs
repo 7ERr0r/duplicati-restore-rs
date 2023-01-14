@@ -9,7 +9,7 @@ mod sorting;
 mod stripbom;
 mod ziparchive;
 
-use crate::restoring::{restore_file, RestoreContext, RestoreParams, RestoreSummary};
+use crate::restoring::{restore_entry, RestoreContext, RestoreParams, RestoreSummary};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
 use blockid::*;
@@ -262,7 +262,7 @@ fn restore_all(
         .filter(|f| f.is_folder())
         .par_bridge()
         .try_for_each_with(RestoreContext::new(), |ctx, entry_folder| -> Result<()> {
-            restore_file(entry_folder, params, ctx).wrap_err("restoring dir")?;
+            restore_entry(entry_folder, params, ctx).wrap_err("restoring dir")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }
@@ -286,7 +286,7 @@ fn restore_all(
         .filter(|f| f.is_file())
         .par_bridge()
         .try_for_each_with(RestoreContext::new(), |ctx, entry_file| -> Result<()> {
-            restore_file(entry_file, params, ctx).wrap_err("restoring file entry")?;
+            restore_entry(entry_file, params, ctx).wrap_err("restoring file entry")?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().add(entry_file.predicted_time());
             }

@@ -69,6 +69,9 @@ pub struct HashToBlocks {
     /// Maps zip file name to a singleton zip reader
     zip2ziparchive: HashMap<String, ZipArchiveWrapper>,
 
+    /// zip_entry_name -> zip_name
+    ///
+    /// takes a lot of RAM so it's not used by default
     hash2path: Option<HashToPath>,
 }
 
@@ -86,30 +89,33 @@ impl HashToBlocks {
         }
     }
 
-    // pub fn get_zip_path_by_base64(&self, block_id: &str) -> Option<PathBuf> {
-    //     if let Some(hash2path) = &self.hash2path {
-    //         hash2path.get_zip_path_by_base64(block_id)
-    //     } else {
-    //         None
-    //     }
-    // }
-
     pub fn get_location_by_block_id(&self, block_id: &BlockIdHash) -> Option<BlockLocation> {
         if let Some(hash2path) = &self.hash2path {
             hash2path.get_location_by_block_id(block_id)
         } else {
-            let buf = &mut [0u8; 48];
-            let name_reencoded = block_id.as_base64_urlsafe(buf);
-            for ziparch in self.zip2ziparchive.values() {
-                if let Some(index) = ziparch.archive.get_file_index(name_reencoded) {
-                    return Some(BlockLocation {
+            self.get_location_by_block_id_purezip(block_id)
+        }
+    }
+    pub fn get_location_by_block_id_purezip(
+        &self,
+        block_id: &BlockIdHash,
+    ) -> Option<BlockLocation> {
+        let buf = &mut [0u8; 48];
+        let name_reencoded = block_id.as_base64_urlsafe(buf);
+        for ziparch in self.zip2ziparchive.values() {
+            let location =
+                ziparch
+                    .archive
+                    .get_file_index(name_reencoded)
+                    .map(|index| BlockLocation {
                         file_index: index as u32,
                         zip_path: ziparch.zip_path.clone(),
                     });
-                }
+            if location.is_some() {
+                return location;
             }
-            None
         }
+        None
     }
 
     pub fn get_zip_archive(&self, zip_filename: &str) -> Option<ZipArchive<MyCloneFileReader>> {
@@ -127,15 +133,22 @@ impl HashToBlocks {
             let zname = zname.map(|n| n.to_string_lossy().to_string());
             zname.and_then(|zname| self.get_zip_archive(&zname))
         } else {
-            let buf = &mut [0u8; 48];
-            let name_reencoded = block_id.as_base64_urlsafe(buf);
-            for ziparch in self.zip2ziparchive.values() {
-                if ziparch.archive.contains_file_name(name_reencoded) {
-                    return Some(ziparch.archive.clone());
-                }
-            }
-            None
+            self.get_zip_by_block_id_purezip(block_id)
         }
+    }
+
+    pub fn get_zip_by_block_id_purezip(
+        &self,
+        block_id: &BlockIdHash,
+    ) -> Option<ZipArchive<MyCloneFileReader>> {
+        let buf = &mut [0u8; 48];
+        let name_reencoded = block_id.as_base64_urlsafe(buf);
+        for ziparch in self.zip2ziparchive.values() {
+            if ziparch.archive.contains_file_name(name_reencoded) {
+                return Some(ziparch.archive.clone());
+            }
+        }
+        None
     }
 }
 
@@ -181,46 +194,63 @@ impl DFileDatabase {
             buf_capacity: AtomicU32::new(1024),
         });
         let zipbuf = MyCloneFileReader::new(config.clone())?;
-        let zip = zip::ZipArchive::new(zipbuf)?;
+        let ziparch = zip::ZipArchive::new(zipbuf)?;
 
-        let arc_zippath = Arc::new(ZipLocation { path: zip_path });
-        // Convert to a list of paths
+        let arc_ziploc = Arc::new(ZipLocation { path: zip_path });
 
-        for (index, file_name) in zip.file_names_ordered().enumerate() {
-            //let file_in_zip = zip.by_index_raw(file_index)?;
-            //let file_name = file_in_zip.name().to_string();
-            let hash_path = file_name;
-            let hash = general_purpose::URL_SAFE.decode(hash_path)?;
-            {
-                if hash.len() > 32 {
-                    println!("warn: hash len:{} requires heap alloc", hash.len());
-                }
-                let mut inner = self.inner.lock().unwrap();
-                if let Some(hash2path) = &mut inner.hash2path {
-                    hash2path.hash2path.insert(
-                        hash.into(),
-                        BlockLocation {
-                            zip_path: arc_zippath.clone(),
-                            file_index: index as u32,
-                        },
-                    );
-                }
-            }
+        let mut inner = self.inner.lock().unwrap();
+
+        if let Some(hash2path) = &mut inner.hash2path {
+            self.register_hash_to_path(hash2path, &ziparch, arc_ziploc.clone())?;
         }
 
-        {
-            use std::sync::atomic::Ordering;
-            config.buf_capacity.store(32 * 1024, Ordering::Relaxed);
-            let mut inner = self.inner.lock().unwrap();
-            let wrapper = ZipArchiveWrapper {
-                zip_path: arc_zippath.clone(),
-                archive: zip,
-            };
-            let path_str = arc_zippath.path.to_string_lossy().to_string();
-            inner.zip2ziparchive.insert(path_str, wrapper);
-        }
+        self.register_zip_archive(config, arc_ziploc, ziparch);
 
         Ok(())
+    }
+    /// Remembers zip file names in a hashmap
+    ///
+    /// zip_entry_name -> zip_name
+    pub fn register_hash_to_path(
+        &self,
+        hash2path: &mut HashToPath,
+        ziparch: &ZipArchive<MyCloneFileReader>,
+        arc_ziploc: Arc<ZipLocation>,
+    ) -> Result<()> {
+        for (index, file_name) in ziparch.file_names_ordered().enumerate() {
+            // file_name is a hash in base64
+            let hash = general_purpose::URL_SAFE.decode(file_name)?;
+
+            if hash.len() > 32 {
+                println!("warn: hash len:{} requires heap alloc", hash.len());
+            }
+
+            hash2path.hash2path.insert(
+                hash.into(),
+                BlockLocation {
+                    zip_path: arc_ziploc.clone(),
+                    file_index: index as u32,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    pub fn register_zip_archive(
+        &self,
+        config: Arc<MyCloneFileConfig>,
+        arc_ziploc: Arc<ZipLocation>,
+        ziparch: ZipArchive<MyCloneFileReader>,
+    ) {
+        use std::sync::atomic::Ordering;
+        config.buf_capacity.store(32 * 1024, Ordering::Relaxed);
+        let mut inner = self.inner.lock().unwrap();
+        let wrapper = ZipArchiveWrapper {
+            zip_path: arc_ziploc.clone(),
+            archive: ziparch,
+        };
+        let path_str = arc_ziploc.path.to_string_lossy().to_string();
+        inner.zip2ziparchive.insert(path_str, wrapper);
     }
 
     pub fn get_block_id_location(&self, block_id: &BlockIdHash) -> Option<BlockLocation> {
@@ -229,15 +259,6 @@ impl DFileDatabase {
             .unwrap()
             .get_location_by_block_id(block_id)
     }
-
-    // pub fn get_zip_path_from_block_id(&self, block_id: &str) -> Option<PathBuf> {
-    //     self.inner.lock().unwrap().get_zip_path_by_base64(block_id)
-    // }
-
-    // pub fn get_zip_archive(&self, zip_filename: &str) -> Option<ZipArchive<MyCloneFileReader>> {
-    //     self.inner.lock().unwrap().get_zip_archive(zip_filename)
-
-    // }
 
     pub fn get_zip_by_block_id(
         &self,
