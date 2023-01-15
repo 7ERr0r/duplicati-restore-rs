@@ -1,7 +1,5 @@
 use crate::{
-    blockid::{FileEntry, FileType},
-    database::DFileDatabase,
-    ziparchive::BlockLocation,
+    database::DFileDatabase, dfileentry::FileEntry, dfiletype::FileType, ziparchive::BlockLocation,
 };
 use std::cmp::Ordering;
 

@@ -6,13 +6,13 @@ use crate::ziparchive::ZipArchiveWrapper;
 use crate::ziparchive::ZipLocation;
 use base64::engine::general_purpose;
 use base64::Engine;
+use eyre::eyre;
 use eyre::Context;
 use eyre::Result;
 use indicatif::{ProgressBar, ProgressStyle};
 use rayon::prelude::IntoParallelRefIterator;
 use rayon::prelude::ParallelIterator;
 use serde::Deserialize;
-
 use smallvec::SmallVec;
 use std::collections::HashMap;
 use std::io::Read;
@@ -178,9 +178,12 @@ impl DFileDatabase {
                 )?
                 .progress_chars("##-"),
         );
-        paths.par_iter().try_for_each(|zip_path| {
+        paths.par_iter().try_for_each(|zip_path| -> Result<()> {
             self.import_from_zip(zip_path)
-                .wrap_err_with(|| format!("import_from_zip: {:?}", zip_path))
+                .wrap_err_with(|| format!("import_from_zip: {:?}", zip_path))?;
+            pb.inc(1);
+
+            Ok(())
         })?;
 
         Ok(())
@@ -198,10 +201,8 @@ impl DFileDatabase {
 
         let arc_ziploc = Arc::new(ZipLocation { path: zip_path });
 
-        let mut inner = self.inner.lock().unwrap();
-
-        if let Some(hash2path) = &mut inner.hash2path {
-            self.register_hash_to_path(hash2path, &ziparch, arc_ziploc.clone())?;
+        if self.inner.lock().unwrap().hash2path.is_some() {
+            self.register_hash_to_path(&ziparch, arc_ziploc.clone())?;
         }
 
         self.register_zip_archive(config, arc_ziploc, ziparch);
@@ -213,7 +214,6 @@ impl DFileDatabase {
     /// zip_entry_name -> zip_name
     pub fn register_hash_to_path(
         &self,
-        hash2path: &mut HashToPath,
         ziparch: &ZipArchive<MyCloneFileReader>,
         arc_ziploc: Arc<ZipLocation>,
     ) -> Result<()> {
@@ -222,16 +222,19 @@ impl DFileDatabase {
             let hash = general_purpose::URL_SAFE.decode(file_name)?;
 
             if hash.len() > 32 {
-                println!("warn: hash len:{} requires heap alloc", hash.len());
+                Err(eyre!("warn: hash len:{} requires heap alloc", hash.len()))?
             }
 
-            hash2path.hash2path.insert(
-                hash.into(),
-                BlockLocation {
-                    zip_path: arc_ziploc.clone(),
-                    file_index: index as u32,
-                },
-            );
+            let mut inner = self.inner.lock().unwrap();
+            if let Some(hash2path) = &mut inner.hash2path {
+                hash2path.hash2path.insert(
+                    hash.into(),
+                    BlockLocation {
+                        zip_path: arc_ziploc.clone(),
+                        file_index: index as u32,
+                    },
+                );
+            }
         }
         Ok(())
     }
@@ -244,13 +247,16 @@ impl DFileDatabase {
     ) {
         use std::sync::atomic::Ordering;
         config.buf_capacity.store(32 * 1024, Ordering::Relaxed);
-        let mut inner = self.inner.lock().unwrap();
+        let path_str = arc_ziploc.path.to_string_lossy().to_string();
         let wrapper = ZipArchiveWrapper {
-            zip_path: arc_ziploc.clone(),
+            zip_path: arc_ziploc,
             archive: ziparch,
         };
-        let path_str = arc_ziploc.path.to_string_lossy().to_string();
-        inner.zip2ziparchive.insert(path_str, wrapper);
+
+        {
+            let mut inner = self.inner.lock().unwrap();
+            inner.zip2ziparchive.insert(path_str, wrapper);
+        }
     }
 
     pub fn get_block_id_location(&self, block_id: &BlockIdHash) -> Option<BlockLocation> {

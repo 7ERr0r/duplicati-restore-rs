@@ -1,12 +1,11 @@
 use crate::{
-    blockhash::BlockIdHash,
-    blockid::{FileEntry, FileType},
-    database::DFileDatabase,
+    blockhash::BlockIdHash, database::DFileDatabase, dfileentry::FileEntry, dfiletype::FileType,
     hexdisplay::HexDisplayBytes,
 };
 use eyre::eyre;
 use eyre::{Context, Result};
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 use std::{
     cell::RefCell,
     fs::{self, File},
@@ -57,7 +56,7 @@ pub struct RestoreSummary {
 }
 
 pub struct RestoreParams<'a> {
-    pub db: &'a DFileDatabase,
+    pub db: Arc<DFileDatabase>,
     pub restore_path: Option<&'a str>,
     pub replace_backslash_to_slash: bool,
     pub summary: RestoreSummary,
@@ -128,7 +127,7 @@ fn restore_file(
     let context = RestoreFileContext {
         restore_context,
         entry,
-        db: params.db,
+        db: &params.db,
         debug_location: false,
         strict_block_size: true,
         hash,

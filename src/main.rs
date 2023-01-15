@@ -1,8 +1,9 @@
 #![warn(rust_2018_idioms)]
 
 mod blockhash;
-mod blockid;
 mod database;
+mod dfileentry;
+mod dfiletype;
 mod hexdisplay;
 mod restoring;
 mod sorting;
@@ -12,9 +13,9 @@ mod ziparchive;
 use crate::restoring::{restore_entry, RestoreContext, RestoreParams, RestoreSummary};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
-use blockid::*;
 use clap::Parser;
 use database::*;
+use dfileentry::*;
 use eyre::eyre;
 use eyre::{Context, Result};
 use pbr::ProgressBar;
@@ -96,8 +97,12 @@ fn path_is_dblock_zip<P: AsRef<Path>>(path: P) -> bool {
     filename_ends_with(path, "dblock.zip")
 }
 
+pub struct FileEntries {
+    pub entries: Vec<FileEntry>,
+}
+
 /// Open dlist file and parse json inside
-fn parse_dlist_file<P: AsRef<Path>>(dlist_path: P) -> Result<Vec<FileEntry>> {
+fn parse_dlist_file<P: AsRef<Path>>(dlist_path: P) -> Result<FileEntries> {
     let dlist_reader = File::open(dlist_path.as_ref())
         .wrap_err_with(|| format!("open {:?}", dlist_path.as_ref()))?;
     let mut dlist_zip = zip::ZipArchive::new(dlist_reader)?;
@@ -191,49 +196,19 @@ fn run() -> Result<()> {
 
     println!("Parsing dlist");
     let file_entries = parse_dlist_file(newest_dlist)?;
-    let file_entries = Arc::new(file_entries);
+    let summary = calculate_summary(&file_entries.entries);
 
-    let entries = file_entries.clone();
-    let summary_join = std::thread::spawn(move || {
-        let file_count = entries.iter().filter(|f| f.is_file()).count();
-        let folder_count = entries.iter().filter(|f| f.is_folder()).count();
-        let predicted_bytes: u64 = entries.iter().map(|f| f.predicted_time()).sum();
-        let total_bytes: u64 = entries.iter().map(|f| f.bytes_size()).sum();
-        RestoreSummary {
-            file_count,
-            folder_count,
-            total_bytes,
-            predicted_bytes,
-        }
-    });
-
-    println!();
-
-    let summary = summary_join.join().unwrap();
-
-    println!("{} files to be restored", summary.file_count);
-    println!("{} folders to be restored", summary.folder_count);
-    println!("{} bytes in files", summary.total_bytes);
-    println!(
-        "{} bytes on drive to be restored (predicted)",
-        summary.predicted_bytes
-    );
-    println!("Waiting for dblocks");
     let dblock_db = db_join.join().unwrap()?;
 
-    println!("Sorting file_entries");
-
-    let mut file_entries = Arc::try_unwrap(file_entries).expect("no other owners of Arc");
-
-    sort_files_sequentially(&mut file_entries, &dblock_db);
+    print_summary(&summary);
 
     let restore_params = RestoreParams {
-        db: &dblock_db,
+        db: Arc::new(dblock_db),
         restore_path: restore_dir,
         replace_backslash_to_slash: args.replace_backslash_to_slash.unwrap_or(!cfg!(windows)),
         summary,
     };
-    restore_all(&args, &restore_params, &file_entries)?;
+    restore_all(&args, &restore_params, file_entries)?;
 
     Ok(())
 }
@@ -241,14 +216,20 @@ fn run() -> Result<()> {
 fn restore_all(
     args: &CliArgs,
     params: &RestoreParams<'_>,
-    file_entries: &[FileEntry],
+    file_entries: FileEntries,
 ) -> Result<()> {
+    let folders: Vec<FileEntry> = file_entries
+        .entries
+        .iter()
+        .filter(|f| f.is_folder())
+        .cloned()
+        .collect();
+    println!("Sorting file_entries");
     let doing = if params.restore_path.is_some() {
         "Restoring"
     } else {
         "Verifying"
     };
-    println!("{doing} directory structure");
     let pb = if args.progress_bar {
         Some(Arc::new(Mutex::new(ProgressBar::new(
             params.summary.folder_count as u64,
@@ -257,20 +238,35 @@ fn restore_all(
         None
     };
 
-    file_entries
-        .iter()
-        .filter(|f| f.is_folder())
-        .par_bridge()
-        .try_for_each_with(RestoreContext::new(), |ctx, entry_folder| -> Result<()> {
-            restore_entry(entry_folder, params, ctx).wrap_err("restoring dir")?;
+    let dbc = params.db.clone();
+    let sort_join = std::thread::spawn(move || -> FileEntries {
+        let mut file_entries = file_entries;
+        sort_files_sequentially(&mut file_entries.entries, &dbc);
+        file_entries
+    });
+
+    println!("{doing} directory structure");
+
+    folders.iter().par_bridge().try_for_each_with(
+        RestoreContext::new(),
+        |ctx, entry_folder| -> Result<()> {
+            restore_entry(entry_folder, params, ctx)
+                .wrap_err_with(|| format!("restoring dir {:?}", entry_folder.path))?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().inc();
             }
             Ok(())
-        })?;
+        },
+    )?;
     if let Some(pb) = &pb {
         pb.lock().unwrap().tick();
     }
+
+    if !sort_join.is_finished() {
+        println!("Waiting for sorting to finish");
+    }
+    let file_entries = sort_join.join().unwrap();
+
     println!();
 
     println!("{doing} files");
@@ -282,11 +278,13 @@ fn restore_all(
         None
     };
     file_entries
+        .entries
         .iter()
         .filter(|f| f.is_file())
         .par_bridge()
         .try_for_each_with(RestoreContext::new(), |ctx, entry_file| -> Result<()> {
-            restore_entry(entry_file, params, ctx).wrap_err("restoring file entry")?;
+            restore_entry(entry_file, params, ctx)
+                .wrap_err_with(|| format!("restoring file {:?}", entry_file.path))?;
             if let Some(pb) = &pb {
                 pb.lock().unwrap().add(entry_file.predicted_time());
             }
@@ -298,6 +296,28 @@ fn restore_all(
     println!();
 
     Ok(())
+}
+fn calculate_summary(entries: &[FileEntry]) -> RestoreSummary {
+    let file_count = entries.iter().filter(|f| f.is_file()).count();
+    let folder_count = entries.iter().filter(|f| f.is_folder()).count();
+    let predicted_bytes: u64 = entries.iter().map(|f| f.predicted_time()).sum();
+    let total_bytes: u64 = entries.iter().map(|f| f.bytes_size()).sum();
+    RestoreSummary {
+        file_count,
+        folder_count,
+        total_bytes,
+        predicted_bytes,
+    }
+}
+
+fn print_summary(summary: &RestoreSummary) {
+    println!("{} files to be restored", summary.file_count);
+    println!("{} folders to be restored", summary.folder_count);
+    println!("{} bytes in files", summary.total_bytes);
+    println!(
+        "{} bytes on drive to be restored (predicted)",
+        summary.predicted_bytes
+    );
 }
 
 #[cfg(feature = "dhat-heap")]
