@@ -17,7 +17,7 @@ pub struct ZipLocation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockLocation {
     /// Which dblock.zip file
-    pub zip_path: Arc<ZipLocation>,
+    pub ziplocation: Arc<ZipLocation>,
 
     /// Which file inside the zip
     pub file_index: u32,
@@ -27,8 +27,8 @@ impl Ord for BlockLocation {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         // First zip_path (which dblock.zip it is)
         // then file_index inside the ZIP file
-        self.zip_path
-            .cmp(&other.zip_path)
+        self.ziplocation
+            .cmp(&other.ziplocation)
             .then_with(|| self.file_index.cmp(&other.file_index))
     }
 }
@@ -40,8 +40,23 @@ impl PartialOrd for BlockLocation {
 }
 
 pub struct ZipArchiveWrapper {
-    pub zip_path: Arc<ZipLocation>,
+    pub ziplocation: Arc<ZipLocation>,
     pub archive: ZipArchive<MyCloneFileReader>,
+}
+
+impl ZipArchiveWrapper {
+    pub fn get_block_location(&self, block_base64: &str) -> Option<BlockLocation> {
+        self.archive
+            .get_file_index(block_base64)
+            .map(|index| BlockLocation {
+                file_index: index as u32,
+                ziplocation: self.ziplocation.clone(),
+            })
+    }
+
+    pub fn contains_file_name(&self, block_base64: &str) -> bool {
+        self.archive.contains_file_name(block_base64)
+    }
 }
 
 pub struct MyCloneFileConfig {

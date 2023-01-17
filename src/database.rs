@@ -58,11 +58,26 @@ impl HashToPath {
     pub fn get_zip_path_by_block_id(&self, block_id: &BlockIdHash) -> Option<PathBuf> {
         self.hash2path
             .get(&block_id.hash)
-            .map(|v| v.zip_path.path.clone())
+            .map(|v| v.ziplocation.path.clone())
     }
 
     pub fn get_location_by_block_id(&self, block_id: &BlockIdHash) -> Option<BlockLocation> {
         self.hash2path.get(&block_id.hash).cloned()
+    }
+
+    pub fn insert_location(
+        &mut self,
+        hash: SmallVec<[u8; 32]>,
+        ziplocation: &Arc<ZipLocation>,
+        entry_index: usize,
+    ) {
+        self.hash2path.insert(
+            hash.into(),
+            BlockLocation {
+                ziplocation: ziplocation.clone(),
+                file_index: entry_index as u32,
+            },
+        );
     }
 }
 pub struct HashToBlocks {
@@ -77,15 +92,13 @@ pub struct HashToBlocks {
 
 impl HashToBlocks {
     pub fn new(use_hash_to_path: bool) -> Self {
-        let hash2path = if use_hash_to_path {
-            Some(HashToPath::new())
-        } else {
-            None
-        };
-        let zip2ziparchive = HashMap::new();
         Self {
-            hash2path,
-            zip2ziparchive,
+            hash2path: if use_hash_to_path {
+                Some(HashToPath::new())
+            } else {
+                None
+            },
+            zip2ziparchive: HashMap::new(),
         }
     }
 
@@ -103,14 +116,7 @@ impl HashToBlocks {
         let buf = &mut [0u8; 48];
         let name_reencoded = block_id.as_base64_urlsafe(buf);
         for ziparch in self.zip2ziparchive.values() {
-            let location =
-                ziparch
-                    .archive
-                    .get_file_index(name_reencoded)
-                    .map(|index| BlockLocation {
-                        file_index: index as u32,
-                        zip_path: ziparch.zip_path.clone(),
-                    });
+            let location = ziparch.get_block_location(name_reencoded);
             if location.is_some() {
                 return location;
             }
@@ -144,7 +150,7 @@ impl HashToBlocks {
         let buf = &mut [0u8; 48];
         let name_reencoded = block_id.as_base64_urlsafe(buf);
         for ziparch in self.zip2ziparchive.values() {
-            if ziparch.archive.contains_file_name(name_reencoded) {
+            if ziparch.contains_file_name(name_reencoded) {
                 return Some(ziparch.archive.clone());
             }
         }
@@ -159,8 +165,6 @@ pub struct DFileDatabase {
 
 impl DFileDatabase {
     pub fn new(manifest_bytes: &[u8], use_hash_to_path: bool) -> Result<Self> {
-        // let conn = UnQLite::create(file);
-        // conn.kv_store("test_key_name", "test_key_value").map_err(|_| eyre!("can't write to database"))?;
         let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
 
         let inner = Arc::new(Mutex::new(HashToBlocks::new(use_hash_to_path)));
@@ -215,7 +219,7 @@ impl DFileDatabase {
     pub fn register_hash_to_path(
         &self,
         ziparch: &ZipArchive<MyCloneFileReader>,
-        arc_ziploc: Arc<ZipLocation>,
+        ziplocation: Arc<ZipLocation>,
     ) -> Result<()> {
         for (index, file_name) in ziparch.file_names_ordered().enumerate() {
             // file_name is a hash in base64
@@ -227,13 +231,7 @@ impl DFileDatabase {
 
             let mut inner = self.inner.lock().unwrap();
             if let Some(hash2path) = &mut inner.hash2path {
-                hash2path.hash2path.insert(
-                    hash.into(),
-                    BlockLocation {
-                        zip_path: arc_ziploc.clone(),
-                        file_index: index as u32,
-                    },
-                );
+                hash2path.insert_location(hash.into(), &ziplocation, index);
             }
         }
         Ok(())
@@ -242,14 +240,14 @@ impl DFileDatabase {
     pub fn register_zip_archive(
         &self,
         config: Arc<MyCloneFileConfig>,
-        arc_ziploc: Arc<ZipLocation>,
+        ziplocation: Arc<ZipLocation>,
         ziparch: ZipArchive<MyCloneFileReader>,
     ) {
         use std::sync::atomic::Ordering;
         config.buf_capacity.store(32 * 1024, Ordering::Relaxed);
-        let path_str = arc_ziploc.path.to_string_lossy().to_string();
+        let path_str = ziplocation.path.to_string_lossy().to_string();
         let wrapper = ZipArchiveWrapper {
-            zip_path: arc_ziploc,
+            ziplocation,
             archive: ziparch,
         };
 
