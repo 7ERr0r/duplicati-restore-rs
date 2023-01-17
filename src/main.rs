@@ -4,18 +4,22 @@ mod blockhash;
 mod database;
 mod dfileentry;
 mod dfiletype;
+mod flags;
 mod hexdisplay;
 mod restoring;
 mod sorting;
 mod stripbom;
 mod ziparchive;
 
+use crate::flags::RestoreFlags;
 use crate::restoring::{restore_entry, RestoreContext, RestoreParams, RestoreSummary};
 use crate::sorting::sort_files_sequentially;
 use crate::stripbom::StripBom;
+
 use clap::Parser;
 use database::*;
 use dfileentry::*;
+use dhatprof::start_dhat_profiler;
 use eyre::eyre;
 use eyre::{Context, Result};
 use pbr::ProgressBar;
@@ -25,51 +29,10 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-struct CliArgs {
-    /// the location of the backup
-    #[arg(short, long)]
-    backup_dir: String,
-
-    /// a location to restore to
-    #[arg(short, long, value_name = "FILE")]
-    restore_dir: Option<String>,
-
-    /// 1 thread will save and read files sequentially
-    #[arg(short, long, default_value_t = 4)]
-    threads_rayon: usize,
-
-    /// displays progress bar in CLI
-    #[arg(short, long)]
-    progress_bar: bool,
-
-    /// true if use additional hashmap to speed up hashed name lookup. Increases memory usage.
-    #[arg(long)]
-    hash_to_path: bool,
-
-    /// true to restore windows backup on linux
-    #[arg(long)]
-    replace_backslash_to_slash: Option<bool>,
-
-    /// true to verify without writing files to disk
-    #[arg(long)]
-    verify_only: bool,
-}
+mod dhatprof;
 
 fn main() {
-    #[cfg(feature = "dhat-heap")]
-    {
-        std::thread::spawn(|| {
-            let _profiler = dhat::Profiler::new_heap();
-
-            std::thread::sleep(std::time::Duration::from_secs(10 * 60));
-            // save profile after 10 minutes
-        });
-
-        std::thread::sleep(std::time::Duration::from_millis(200));
-    }
+    start_dhat_profiler();
 
     let result = run();
     match result {
@@ -108,8 +71,6 @@ fn parse_dlist_file<P: AsRef<Path>>(dlist_path: P) -> Result<FileEntries> {
     let mut dlist_zip = zip::ZipArchive::new(dlist_reader)?;
     let filelist_name = "filelist.json";
     let dlist_file = dlist_zip.by_name(filelist_name)?;
-    // let mut dlist_contents = Vec::new();
-    // dlist_file.read_to_end(&mut dlist_contents)?;
     let bufrdr = BufReader::with_capacity(32 * 1024, dlist_file);
     let list = parse_dlist_read(bufrdr).wrap_err_with(|| {
         format!(
@@ -137,7 +98,7 @@ fn read_manifest<P: AsRef<Path>>(dlist_path: P) -> Result<Vec<u8>> {
 }
 
 fn run() -> Result<()> {
-    let args = CliArgs::parse();
+    let args = RestoreFlags::parse();
     let backup_dir = args.backup_dir.trim().to_string();
     let restore_dir = if !args.verify_only {
         let dir = args
@@ -214,7 +175,7 @@ fn run() -> Result<()> {
 }
 
 fn restore_all(
-    args: &CliArgs,
+    args: &RestoreFlags,
     params: &RestoreParams<'_>,
     file_entries: FileEntries,
 ) -> Result<()> {

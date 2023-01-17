@@ -66,6 +66,12 @@ pub struct MyCloneFileConfig {
     /// Smaller buf does less redundant byte reads from disk when indexing.
     pub buf_capacity: AtomicU32,
 }
+
+/// Used to share ZipArchive across many threads
+///
+/// Multiple ZipArchive structs would allocate too much Vec<Files> in rayon threads
+///
+/// Therefore we open file again on every .clone()
 pub struct MyCloneFileReader {
     pub config: Arc<MyCloneFileConfig>,
     buf_reader: BufReader<File>,

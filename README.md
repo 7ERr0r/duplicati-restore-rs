@@ -9,7 +9,7 @@ Processes files across many threads, to maximze restore speed.
 Usage: cargo run -- --backup-dir <BACKUP_DIR> --restore-dir <FILE>
 ```
 
-[More flags here](https://github.com/7ERr0r/duplicati-restore-rs/blob/master/src/main.rs#L31)
+[More flags here](https://github.com/7ERr0r/duplicati-restore-rs/blob/master/src/flags.rs#L5)
 
 Or download the latest [binary from releases](https://github.com/7ERr0r/duplicati-restore-rs/releases)
 
